@@ -28,9 +28,13 @@ const ITEM_ICON = { bomb: '💣', fire: '🔥', speed: '👟', kick: '🦶', meg
 const MEGA = new Set(['mega', 'pierce', 'shield', 'ghost', 'remote']); // seltene Mega-Items
 const REMOTE_MAX = 20;       // Sekunden, nach denen eine Fernzünder-Bombe spätestens von selbst hochgeht
 const GHOST_TIME = 15;       // Sekunden durch Kisten und Bomben laufen
+const SPECIAL_TIME = 15;     // so lange wirken Megafeuer, Durchschlag und Fernzünder (Schild hält bis zum Treffer)
 const SHIELD_GRACE = 1.5;    // Sekunden unverwundbar, nachdem der Schild ein Feuer abgefangen hat
 const COLORS = ['#ff8a3d', '#3dc6ff', '#7ee06a', '#e56bff', '#ffd23d', '#ff5c8a'];
 // Startplätze: vier Ecken, Spieler 5 und 6 oben und unten in der Mitte
+// Megafeuer (zeitlich begrenzt): volle Reichweite und eine Bombe mehr, solange es wirkt
+const rangeOf = (p) => p.mega > 0 ? 10 : p.range;
+const bombsOf = (p) => Math.min(8, p.maxBombs + (p.mega > 0 ? 1 : 0));
 const spawns = () => { const mx = (W - 1) >> 1; return [[1, 1], [W - 2, H - 2], [W - 2, 1], [1, H - 2], [mx, 1], [mx, H - 2]]; };
 // Klassischer Modus: Feldgröße nach Spielerzahl (4: klassisch, 5–6: etwas größer)
 const CLASSIC_SIZE = { 4: [15, 13], 5: [17, 13], 6: [19, 15] };
@@ -207,7 +211,7 @@ class Game {
     const used = new Set(this.players.map((p) => p.slot));
     let slot = 0; while (used.has(slot)) slot++;
     const p = { id, name, slot, color: COLORS[slot], score: 0, alive: false, x: 0, y: 0, dir: 'down', moving: false,
-      maxBombs: 1, range: 2, speed: BASE_SPEED, kick: false, pierce: false, shield: false, ghost: 0, grace: 0, remote: false, input: { dx: 0, dy: 0, bomb: 0, det: 0 }, lastBomb: 0, lastDet: 0 };
+      maxBombs: 1, range: 2, speed: BASE_SPEED, kick: false, pierce: 0, shield: false, ghost: 0, grace: 0, remote: 0, mega: 0, input: { dx: 0, dy: 0, bomb: 0, det: 0 }, lastBomb: 0, lastDet: 0 };
     this.players.push(p);
     return p;
   }
@@ -260,7 +264,7 @@ class Game {
     this.bombs = []; this.flames = []; this.items = [];
     this.players.forEach((p) => {
       const [x, y] = spawns()[p.slot];
-      Object.assign(p, { x, y, alive: true, dir: 'down', moving: false, maxBombs: 1, range: 2, speed: BASE_SPEED, kick: false, pierce: false, shield: false, ghost: 0, grace: 0, remote: false });
+      Object.assign(p, { x, y, alive: true, dir: 'down', moving: false, maxBombs: 1, range: 2, speed: BASE_SPEED, kick: false, pierce: 0, shield: false, ghost: 0, grace: 0, mega: 0, remote: 0 });
       p.lastBomb = p.input.bomb; p.lastDet = p.input.det;
     });
     this.clock = 0; // zählt die Spielzeit der Runde hoch, es gibt kein Zeitlimit
@@ -372,8 +376,8 @@ class Game {
   placeBomb(p) {
     const x = Math.round(p.x), y = Math.round(p.y);
     if (this.tile(x, y) !== EMPTY || this.bombAt(x, y)) return;
-    if (this.bombs.filter((b) => b.owner === p.id).length >= p.maxBombs) return;
-    this.bombs.push({ x, y, owner: p.id, range: p.range, pierce: p.pierce, remote: p.remote, fuse: p.remote ? REMOTE_MAX : FUSE, vx: 0, vy: 0, slide: 0 });
+    if (this.bombs.filter((b) => b.owner === p.id).length >= bombsOf(p)) return;
+    this.bombs.push({ x, y, owner: p.id, range: rangeOf(p), pierce: p.pierce > 0, remote: p.remote > 0, fuse: p.remote > 0 ? REMOTE_MAX : FUSE, vx: 0, vy: 0, slide: 0 });
   }
 
   explode(first) {
@@ -437,6 +441,13 @@ class Game {
     for (const p of this.players) {
       if (!p.alive) { p.lastBomb = p.input.bomb; p.lastDet = p.input.det; continue; }
       if (p.ghost > 0) p.ghost = Math.max(0, p.ghost - dt);
+      if (p.mega > 0) p.mega = Math.max(0, p.mega - dt);
+      if (p.pierce > 0) p.pierce = Math.max(0, p.pierce - dt);
+      if (p.remote > 0) {
+        p.remote = Math.max(0, p.remote - dt);
+        // Fernzünder abgelaufen: liegende Fernzünder-Bomben gehen wieder von selbst hoch
+        if (!p.remote) for (const b of this.bombs) if (b.owner === p.id && b.remote) { b.remote = false; b.fuse = Math.min(b.fuse, FUSE); }
+      }
       if (p.grace > 0) p.grace = Math.max(0, p.grace - dt);
       this.movePlayer(p, dt);
       if (p.input.bomb !== p.lastBomb) { p.lastBomb = p.input.bomb; this.placeBomb(p); }
@@ -455,11 +466,11 @@ class Game {
         if (it.type === 'fire') p.range = Math.min(10, p.range + 1);
         if (it.type === 'speed') p.speed = Math.min(MAX_SPEED, p.speed + SPEED_STEP);
         if (it.type === 'kick') p.kick = true;
-        if (it.type === 'mega') { p.range = 10; p.maxBombs = Math.min(8, p.maxBombs + 1); }
-        if (it.type === 'pierce') p.pierce = true;
+        if (it.type === 'mega') p.mega = SPECIAL_TIME;
+        if (it.type === 'pierce') p.pierce = SPECIAL_TIME;
         if (it.type === 'shield') p.shield = true;
         if (it.type === 'ghost') p.ghost = GHOST_TIME;
-        if (it.type === 'remote') p.remote = true;
+        if (it.type === 'remote') p.remote = SPECIAL_TIME;
       }
     }
 
@@ -524,9 +535,9 @@ class Game {
       t: 'state', w: W, h: H, wins: this.rules.wins, variant: this.rules.variant, phase: this.phase, round: this.round, msg: this.msg, clock: Math.max(0, Math.ceil(this.clock)),
       grid: this.grid.join(''),
       players: this.players.map((p) => ({ id: p.id, name: p.name, color: p.color, score: p.score, alive: p.alive,
-        x: +p.x.toFixed(3), y: +p.y.toFixed(3), dir: p.dir, moving: p.moving, bombs: p.maxBombs, range: p.range,
+        x: +p.x.toFixed(3), y: +p.y.toFixed(3), dir: p.dir, moving: p.moving, bombs: bombsOf(p), range: rangeOf(p), mega: Math.ceil(p.mega),
         speed: Math.round((p.speed - BASE_SPEED) / SPEED_STEP), kick: p.kick,
-        pierce: p.pierce, shield: p.shield, ghost: Math.ceil(p.ghost), grace: p.grace > 0, remote: p.remote, waiting: !!p.waiting })),
+        pierce: Math.ceil(p.pierce), shield: p.shield, ghost: Math.ceil(p.ghost), grace: p.grace > 0, remote: Math.ceil(p.remote), waiting: !!p.waiting })),
       bombs: this.bombs.map((b) => [b.x, b.y, +b.fuse.toFixed(2), b.remote ? 1 : 0]),
       flames: this.flames.map((f) => [f.x, f.y]),
       items: this.items.map((i) => [i.x, i.y, i.type]),
@@ -1375,7 +1386,7 @@ function soundsFor(v) {
   for (const q of v.players) {
     const o = before.get(q.id); if (!o) continue;
     if (o.alive && !q.alive) Sound.play('death');
-    else if (q.alive && ((q.pierce && !o.pierce) || (q.shield && !o.shield) || q.ghost > o.ghost || (q.remote && !o.remote) || q.range - o.range > 1)) Sound.play('mega');
+    else if (q.alive && (q.pierce > o.pierce || (q.shield && !o.shield) || q.ghost > o.ghost || q.remote > o.remote || q.mega > (o.mega || 0))) Sound.play('mega');
     else if (q.alive && (q.bombs > o.bombs || q.range > o.range || q.speed > o.speed || (q.kick && !o.kick))) Sound.play('pickup');
     else if (q.alive && o.shield && !q.shield) Sound.play('shieldhit');
   }
@@ -1418,7 +1429,7 @@ function draw(v, isHost) {
   const hud = v.players.map((p) =>
     `<span class="hud-p${p.alive || v.phase === 'lobby' ? '' : ' dead'}${p.id === S.myId ? ' me' : ''}"${p.id === S.myId ? ' title="Antippen, um deinen Namen zu ändern"' : ''}><span class="dot" style="background:${p.color}"></span>${esc(p.name)} <b title="Siege in dieser Sitzung">🏆 ${p.score}</b>` +
     (p.waiting ? ' <small>👀 ab nächster Runde</small>' : '') +
-    (p.id === S.myId ? ` <small>💣${p.bombs} 🔥${p.range} 👟${p.speed}${p.kick ? ' 🦶' : ''}${p.pierce ? ' 💥' : ''}${p.shield ? ' 🛡️' : ''}${p.ghost ? ' 👻' + p.ghost : ''}${p.remote ? ' 🧨 Strg' : ''}</small>` : '') + '</span>').join('');
+    (p.id === S.myId ? ` <small>💣${p.bombs} 🔥${p.range} 👟${p.speed}${p.kick ? ' 🦶' : ''}${p.mega ? ' 🌟' + p.mega : ''}${p.pierce ? ' 💥' + p.pierce : ''}${p.shield ? ' 🛡️' : ''}${p.ghost ? ' 👻' + p.ghost : ''}${p.remote ? ' 🧨' + p.remote : ''}</small>` : '') + '</span>').join('');
   if (hud !== lastHud) { $('hud').innerHTML = hud; lastHud = hud; }
   // Andere Spieler im Raum oder neuer Name? Dann den Direktvergleich neu aufbauen
   const who = v.players.map((p) => p.name + p.color).join('|');
@@ -1593,7 +1604,7 @@ window.Funkenfeld = { Game, S, Sound };
 // Versteckte Hilfe: Wer 10-mal schnell auf dieselbe Stelle tippt (oder klickt), bekommt erklärt, was sie tut.
 const HELP = [
   ['#touch-bomb', 'Bombe legen. Sie explodiert nach kurzer Zeit in alle vier Richtungen und sprengt Kisten. Am PC: Leertaste oder Enter.'],
-  ['#touch-det', 'Fernzünder: Mit dem 🧨-Item gehen deine Bomben erst hoch, wenn du hier tippst (spätestens nach 20 Sekunden). Am PC: Strg.'],
+  ['#touch-det', 'Fernzünder: Mit dem 🧨-Item gehen deine Bomben 15 Sekunden lang erst hoch, wenn du hier tippst (spätestens nach 20 Sekunden). Am PC: Strg.'],
   ['.pad button', 'Steuerkreuz: Gedrückt halten, um in diese Richtung zu laufen. Am PC: Pfeiltasten oder WASD.'],
   ['#stage', 'Das Spielfeld. Bei „Wischen“: irgendwo in eine Richtung wischen und den Finger liegen lassen, um zu laufen. Bomben legst du mit dem 💣-Knopf.'],
   ['.ctl-pick label', 'Handysteuerung: „Tasten“ zeigt ein Steuerkreuz, bei „Wischen“ wischst du irgendwo auf dem Bildschirm. Gilt nur für diesen Browser.'],
