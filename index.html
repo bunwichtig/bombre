@@ -114,19 +114,20 @@
         <label><input type="radio" name="mode" value="individuell"><span>Individuell</span></label>
       </div>
       <p id="mode-note" class="note"></p>
+      <label>Feldgröße
+        <select name="size">
+          <option value="auto">Automatisch (nach Spielerzahl)</option>
+          <option value="klein">Klein (11 × 9)</option>
+          <option value="mittel">Mittel (15 × 13)</option>
+          <option value="gross">Groß (19 × 15)</option>
+          <option value="riesig">Riesig (23 × 17)</option>
+        </select>
+      </label>
       <div id="set-indiv">
       <label>Spielvariante
         <select name="variant">
           <option value="klassisch">Klassisch</option>
           <option value="schrumpf">Schrumpfendes Feld (ab 2:00 fallen Blöcke)</option>
-        </select>
-      </label>
-      <label>Feldgröße
-        <select name="size">
-          <option value="klein">Klein (11 × 9)</option>
-          <option value="mittel">Mittel (15 × 13)</option>
-          <option value="gross">Groß (19 × 15)</option>
-          <option value="riesig">Riesig (23 × 17)</option>
         </select>
       </label>
       <label>Power-up-Chance pro Kiste: <b id="set-items-val">30 %</b>
@@ -180,7 +181,7 @@
         </details>
       </aside>
       <aside id="board-side" class="panel board-side">
-        <h2>📊 Siege &amp; Niederlagen</h2>
+        <h2>⚔️ Direktvergleich</h2>
         <div class="board"></div>
       </aside>
       <div class="game-main">
@@ -210,6 +211,12 @@
         <div class="row center">
           <button id="btn-again" class="hidden secondary" title="Zurück zur Lobby, Siege dieser Sitzung auf 0">Zur Lobby</button>
           <button id="btn-mode" class="hidden secondary" type="button">⚙️ Klassisch</button>
+          <label id="game-size-wrap" class="game-size hidden" title="Feldgröße, gilt ab der nächsten Runde">📐
+            <select id="game-size">
+              <option value="auto">Automatisch</option><option value="klein">Klein 11 × 9</option><option value="mittel">Mittel 15 × 13</option><option value="gross">Groß 19 × 15</option><option value="riesig">Riesig 23 × 17</option>
+            </select>
+            <small id="game-size-note"></small>
+          </label>
           <button id="btn-mute" class="secondary"></button>
         </div>
       </div>
@@ -220,7 +227,7 @@
     <span>Es gibt eine neue Version von BombRe.</span>
     <button id="btn-update" type="button">Jetzt laden</button>
   </div>
-  <p class="ver">Version 1.0.0 <span class="build">· __VERSION__</span></p>
+  <p class="ver">Version 1.1.0 <span class="build">· __VERSION__</span></p>
   <!-- Chat: wird je nach Bildschirm in die Lobby oder neben das Spielfeld gehängt -->
   <div id="chat" class="chat hidden">
     <div class="chat-grip" aria-hidden="true"></div>
