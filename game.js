@@ -27,7 +27,7 @@ const ITEM_WEIGHTS = [4, 4, 3, 1.5, 0.4, 0.4, 0.4, 0.4, 0.4];
 const ITEM_ICON = { bomb: '💣', fire: '🔥', speed: '👟', kick: '🦶', mega: '🌟', pierce: '💥', shield: '🛡️', ghost: '👻', remote: '🧨' };
 const MEGA = new Set(['mega', 'pierce', 'shield', 'ghost', 'remote']); // seltene Mega-Items
 const REMOTE_MAX = 20;       // Sekunden, nach denen eine Fernzünder-Bombe spätestens von selbst hochgeht
-const GHOST_TIME = 10;       // Sekunden durch Kisten und Bomben laufen
+const GHOST_TIME = 15;       // Sekunden durch Kisten und Bomben laufen
 const SHIELD_GRACE = 1.5;    // Sekunden unverwundbar, nachdem der Schild ein Feuer abgefangen hat
 const COLORS = ['#ff8a3d', '#3dc6ff', '#7ee06a', '#e56bff', '#ffd23d', '#ff5c8a'];
 // Startplätze: vier Ecken, Spieler 5 und 6 oben und unten in der Mitte
