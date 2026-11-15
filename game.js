@@ -250,12 +250,13 @@ class Game {
   startRound() {
     this.round++;
     for (const p of this.players) p.waiting = false;
-    if (this.rules.mode === 'klassisch') {
-      // Klassisch: Feldgröße folgt der Zahl der Spieler, die gerade da sind
-      this.rules = rulesFor(this.settings, this.players.length);
-      const [w, h] = this.rules.dims;
-      if (w !== W || h !== H) { applySize(w, h); this.grid = new Array(W * H).fill(EMPTY); }
-    }
+    // Regeln zu jeder Runde neu: Klassisch passt das Feld an die Spielerzahl an, und ein im Spiel
+    // umgeschalteter Modus (Zahnrad-Knopf) gilt ab hier
+    const before = this.rules.mode;
+    this.rules = rulesFor(this.settings, this.players.length);
+    const [w, h] = this.rules.dims;
+    if (w !== W || h !== H) { applySize(w, h); this.grid = new Array(W * H).fill(EMPTY); }
+    if (before !== this.rules.mode && typeof broadcastLobby === 'function') setTimeout(broadcastLobby, 0);
     this.buildMap();
     this.bombs = []; this.flames = []; this.items = [];
     this.players.forEach((p) => {
@@ -569,8 +570,8 @@ function ranking() {
   const by = new Map();
   for (const m of loadMatches()) for (const p of m.players) {
     const key = p.name.trim().toLowerCase();
-    const r = by.get(key) || { name: p.name, wins: 0, last: 0 };
-    r.wins += p.score;
+    const r = by.get(key) || { name: p.name, wins: 0, losses: 0, last: 0 };
+    r.wins += p.score; r.losses += p.score ? 0 : 1;
     if (m.date >= r.last) { r.last = m.date; r.name = p.name; }
     by.set(key, r);
   }
@@ -583,13 +584,31 @@ function renderRanking() {
       rows.slice(0, 20).map((r, i) => `<tr><td>${['🥇', '🥈', '🥉'][i] || i + 1}</td><td>${esc(r.name)}</td><td>${r.wins}</td></tr>`).join('') +
       '</tbody></table>'
     : '<p class="muted">Noch keine Siege. Nach der ersten gewonnenen Runde steht hier, wer vorne liegt.</p>';
+  const board = renderBoard(rows);
   document.querySelectorAll('.ranking').forEach((el) => { el.innerHTML = html; });
+  // Handy: Siege & Niederlagen unten in der aufklappbaren Rangliste im Spiel
+  const rf = document.querySelector('#rank-fold .ranking');
+  if (rf) rf.insertAdjacentHTML('beforeend', '<div class="board board-in-rank">' + board + '</div>');
+}
+// Board: Siege und Niederlagen je Spieler (Niederlage = Runde mitgespielt, aber nicht gewonnen)
+function renderBoard(rows) {
+  rows = [...rows].sort((a, b) => (b.wins - b.losses) - (a.wins - a.losses) || b.wins - a.wins || b.last - a.last);
+  const html = rows.length
+    ? '<table><thead><tr><th>Name</th><th title="Gewonnene Runden">Siege</th><th title="Runden mitgespielt, aber nicht gewonnen">Niederl.</th><th title="Siege minus Niederlagen">±</th><th title="Anteil gewonnener Runden">Quote</th></tr></thead><tbody>' +
+      rows.slice(0, 20).map((r) => {
+        const d = r.wins - r.losses, n = r.wins + r.losses;
+        return `<tr><td>${esc(r.name)}</td><td class="win">${r.wins}</td><td class="loss">${r.losses}</td>` +
+          `<td class="${d > 0 ? 'win' : d < 0 ? 'loss' : ''}">${d > 0 ? '+' : ''}${d}</td><td>${n ? Math.round(r.wins / n * 100) : 0} %</td></tr>`;
+      }).join('') + '</tbody></table>'
+    : '<p class="muted">Noch keine Runden gespielt. Nach jeder gewonnenen Runde stehen hier Siege und Niederlagen.</p>';
+  document.querySelectorAll('.board').forEach((el) => { el.innerHTML = html; });
+  return html;
 }
 function recordWin(g) {
   const winner = g.players.find((p) => p.name === g.lastWinner);
   if (!winner || g.players.length < 2) return;
   const m = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8), date: Date.now(),
-    players: g.players.map((p) => ({ name: p.name, score: p === winner ? 1 : 0 })), winner: winner.name };
+    players: g.players.filter((p) => !p.waiting).map((p) => ({ name: p.name, score: p === winner ? 1 : 0 })), winner: winner.name };
   mergeMatches([m]);
   renderRanking();
   const msg = { t: 'matches', list: loadMatches() };
@@ -919,6 +938,17 @@ if (navigator.share) {
     navigator.share({ title: 'BombRe', text: 'Spiel mit mir BombRe, Raum „' + (S.roomName || S.room) + '“:', url: inviteLink() }).catch(() => {});
   });
 }
+// Im Spiel: Tipp auf Titel oder Unterzeile teilt den Einladungslink (Handy: Teilen-Menü, PC: kopieren)
+async function shareFromGame() {
+  if (!inGame() || !S.room) return;
+  const url = inviteLink(), text = 'Spiel mit mir BombRe, Raum „' + (S.roomName || S.room) + '“:';
+  if (navigator.share && Chat.mobile()) { navigator.share({ title: 'BombRe', text, url }).catch(() => {}); return; }
+  let ok = false;
+  try { await navigator.clipboard.writeText(url); ok = true; } catch (e) {}
+  Chat.toast({ name: '🔗', color: 'transparent', text: ok ? 'Einladungslink kopiert. Einfach an Mitspieler schicken.' : url });
+}
+document.querySelector('header h1').addEventListener('click', shareFromGame);
+document.querySelector('header .sub').addEventListener('click', shareFromGame);
 function renderSettings(st, isHost) {
   st = cleanSettings(st);
   const form = $('settings');
@@ -1089,7 +1119,7 @@ setCtl(ctlMode);
 // Wischen funktioniert im Spiel überall auf dem Bildschirm, außer auf Knöpfen, Eingabefeldern, dem Chat
 // und der Rangliste. Tippen legt keine Bombe mehr, dafür gibt es den 💣-Knopf.
 (function swipe() {
-  const SKIP = 'button, input, select, textarea, label, summary, a, .hud-p.me, .chat, .chat-toggle, .help-bubble, .ranking, .leave-row, .update-bar';
+  const SKIP = 'button, input, select, textarea, label, summary, a, .hud-p.me, header h1, header .sub, .chat, .chat-toggle, .help-bubble, .ranking, .leave-row, .update-bar';
   let sw = null;
   document.addEventListener('pointerdown', (e) => {
     if (ctlMode !== 'wischen' || sw || !inGame() || e.pointerType === 'mouse') return;
@@ -1126,6 +1156,23 @@ $('btn-start').onclick = () => {
   S.game.startMatch();
   broadcastLobby();
   show('game');
+};
+// Zahnrad (PC, nur Gastgeber): Spielmodus im Spiel umschalten, gilt ab der nächsten Runde
+function updateModeBtn() {
+  const st = S.game && cleanSettings(S.game.settings), b = $('btn-mode');
+  if (!st) return;
+  const next = st.mode === 'klassisch' ? 'individuell' : 'klassisch';
+  const pending = S.game.phase !== 'lobby' && S.game.rules.mode !== st.mode;
+  b.innerHTML = `⚙️ ${MODES[st.mode]}${pending ? ' <small>(ab nächster Runde)</small>' : ''}`;
+  b.title = `Spielmodus: ${MODES[st.mode]}. Klicken für ${MODES[next]} – gilt ab der nächsten Runde.`;
+}
+$('btn-mode').onclick = () => {
+  if (S.role !== 'host') return;
+  const st = cleanSettings(S.game.settings);
+  st.mode = st.mode === 'klassisch' ? 'individuell' : 'klassisch';
+  S.game.settings = cleanSettings(st);
+  try { localStorage.setItem('ff-settings', JSON.stringify(S.game.settings)); } catch (e) {}
+  updateModeBtn();
 };
 $('btn-again').onclick = () => {
   if (S.role !== 'host') return;
@@ -1348,6 +1395,8 @@ function draw(v, isHost) {
   ov.classList.toggle('hidden', !v.msg);
   if (v.msg && ov.textContent !== v.msg) ov.textContent = v.msg;
   $('btn-again').classList.toggle('hidden', !isHost);
+  $('btn-mode').classList.toggle('hidden', !isHost);
+  if (isHost) updateModeBtn();
 }
 
 function drawWall(px, py) {
