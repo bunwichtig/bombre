@@ -255,11 +255,11 @@ class Game {
     for (const p of this.players) p.waiting = false;
     // Regeln zu jeder Runde neu: Klassisch passt das Feld an die Spielerzahl an, und ein im Spiel
     // umgeschalteter Modus (Zahnrad-Knopf) gilt ab hier
-    const before = this.rules.mode;
     this.rules = rulesFor(this.settings, this.players.length);
     const [w, h] = this.rules.dims;
     if (w !== W || h !== H) { applySize(w, h); this.grid = new Array(W * H).fill(EMPTY); }
-    if (before !== this.rules.mode && typeof broadcastLobby === 'function') setTimeout(broadcastLobby, 0);
+    // Einstellungen könnten im Spiel geändert worden sein: allen den aktuellen Stand schicken
+    if (this.round > 1 && typeof broadcastLobby === 'function') setTimeout(() => { broadcastLobby(); updateModeBtn(); }, 0);
     this.buildMap();
     this.bombs = []; this.flames = []; this.items = [];
     this.players.forEach((p) => {
@@ -1227,34 +1227,31 @@ $('btn-start').onclick = () => {
   broadcastLobby();
   show('game');
 };
-// Zahnrad (PC, nur Gastgeber): Spielmodus im Spiel umschalten, gilt ab der nächsten Runde
+// Zahnrad (PC, nur Gastgeber): kleiner Knopf am Rand, klappt die Spieleinstellungen auf
+// (Klassisch/Individuell, Feldgröße und die Optionen von Individuell). Dafür wandert das Einstellungs-
+// Formular aus der Lobby in das Panel; Änderungen gelten ab der nächsten Runde.
+let settingsHome = null;
 function updateModeBtn() {
-  const st = S.game && cleanSettings(S.game.settings), b = $('btn-mode');
-  if (!st) return;
-  const next = st.mode === 'klassisch' ? 'individuell' : 'klassisch';
-  const pending = S.game.phase !== 'lobby' && S.game.rules.mode !== st.mode;
-  b.innerHTML = `⚙️ ${MODES[st.mode]}${pending ? ' <small>(ab nächster Runde)</small>' : ''}`;
-  b.title = `Spielmodus: ${MODES[st.mode]}. Klicken für ${MODES[next]} – gilt ab der nächsten Runde.`;
-  const sz = $('game-size');
-  if (document.activeElement !== sz) sz.value = st.size;
-  const [w, h] = rulesFor(st, S.game.players.length).dims;
-  sz.title = `Feldgröße jetzt ${W} × ${H}` + (w !== W || h !== H ? `, ab nächster Runde ${w} × ${h}` : '');
-  $('game-size-note').textContent = w !== W || h !== H ? `ab nächster Runde ${w} × ${h}` : '';
+  if (!S.game || $('game-settings').classList.contains('hidden')) return;
+  const st = cleanSettings(S.game.settings), [w, h] = rulesFor(st, S.game.players.length).dims;
+  const changed = S.game.rules.mode !== st.mode || w !== W || h !== H || S.game.rules.variant !== rulesFor(st, S.game.players.length).variant;
+  $('gs-note').textContent = changed ? `Ab nächster Runde: ${MODES[st.mode]}, Feld ${w} × ${h}` : 'Änderungen gelten ab der nächsten Runde.';
 }
-$('game-size').onchange = () => {
-  if (S.role !== 'host') return;
-  S.game.settings = cleanSettings({ ...S.game.settings, size: $('game-size').value });
-  try { localStorage.setItem('ff-settings', JSON.stringify(S.game.settings)); } catch (e) {}
-  updateModeBtn();
-};
-$('btn-mode').onclick = () => {
-  if (S.role !== 'host') return;
-  const st = cleanSettings(S.game.settings);
-  st.mode = st.mode === 'klassisch' ? 'individuell' : 'klassisch';
-  S.game.settings = cleanSettings(st);
-  try { localStorage.setItem('ff-settings', JSON.stringify(S.game.settings)); } catch (e) {}
-  updateModeBtn();
-};
+function openGameSettings(open) {
+  const panel = $('game-settings'), form = $('settings');
+  if (open && S.role === 'host') {
+    if (!settingsHome) settingsHome = { parent: form.parentNode, next: form.nextSibling };
+    $('gs-slot').append(form);
+    renderSettings(S.game.settings, true);
+    panel.classList.remove('hidden'); $('btn-mode').classList.add('on');
+    updateModeBtn();
+  } else {
+    panel.classList.add('hidden'); $('btn-mode').classList.remove('on');
+    if (settingsHome && form.parentNode !== settingsHome.parent) settingsHome.parent.insertBefore(form, settingsHome.next);
+  }
+}
+$('btn-mode').onclick = () => openGameSettings($('game-settings').classList.contains('hidden'));
+$('gs-close').onclick = () => openGameSettings(false);
 $('btn-again').onclick = () => {
   if (S.role !== 'host') return;
   S.game.phase = 'lobby';
@@ -1332,9 +1329,11 @@ $('btn-random').onclick = () => {
 $('name-form').addEventListener('submit', (e) => { e.preventDefault(); changeMyName($('my-name').value); $('my-name').blur(); });
 $('hud').addEventListener('click', (e) => { if (e.target.closest('.hud-p.me')) askName(); });
 $('settings').addEventListener('input', () => {
-  if (S.role !== 'host' || S.game.phase !== 'lobby') return;
+  if (S.role !== 'host') return;
   S.game.settings = readSettings();
   try { localStorage.setItem('ff-settings', JSON.stringify(S.game.settings)); } catch (e) {}
+  // Im Spiel: nur merken und anzeigen; die Mitspieler bekommen es zur nächsten Runde
+  if (S.game.phase !== 'lobby') { renderSettings(S.game.settings, true); updateModeBtn(); return; }
   broadcastLobby();
 });
 renderRanking();
@@ -1480,8 +1479,6 @@ function draw(v, isHost) {
   if (v.msg && ov.textContent !== v.msg) ov.textContent = v.msg;
   $('btn-again').classList.toggle('hidden', !isHost);
   $('btn-mode').classList.toggle('hidden', !isHost);
-  $('game-size-wrap').classList.toggle('hidden', !isHost);
-  if (isHost) updateModeBtn();
 }
 
 function drawWall(px, py) {
