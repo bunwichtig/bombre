@@ -1241,7 +1241,13 @@ const Sound = (() => {
   }
   const fx = {
     place: () => { tone('square', 220, 110, 0.08, 0.25); },
-    boom: () => { noise(0.7, 0.9, 2400, 80); tone('sine', 90, 30, 0.5, 0.7); },
+    // Bassiger Knall: dumpfes Rauschen, kurzer Druck-Schlag (auch auf Handylautsprechern hörbar) und langer Tiefbass
+    boom: () => {
+      noise(0.9, 0.8, 900, 45);
+      tone('sine', 160, 45, 0.18, 0.9);
+      tone('triangle', 110, 38, 0.55, 0.6);
+      tone('sine', 65, 24, 1.0, 0.9);
+    },
     pickup: () => { [660, 880, 1320].forEach((f, i) => tone('triangle', f, 0, 0.09, 0.3, i * 0.06)); },
     death: () => { tone('sawtooth', 500, 60, 0.6, 0.3); },
     start: () => { [523, 659, 784].forEach((f, i) => tone('square', f, 0, 0.12, 0.18, i * 0.12)); },
