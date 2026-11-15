@@ -549,9 +549,50 @@ class Game {
 // Jeder Rundensieg wird als Eintrag gespeichert (im Browser, localStorage). Ältere Einträge stammen
 // noch aus ganzen Spielen; dort zählen die gewonnenen Runden (score) genauso als Siege.
 // Beim Beitreten tauschen Gastgeber und Mitspieler ihre Listen aus, so haben alle denselben Stand.
-const RANK_KEY = 'ff-matches', RANK_MAX = 300;
+// Kein Limit mehr: alle Runden bleiben erhalten. Gespeichert und verschickt wird kompakt
+// (jeder Name nur einmal, Runden als kurze Listen); passt der Browser-Speicher irgendwann nicht mehr,
+// fallen nur dann die ältesten Runden aus dem Speicher (in der laufenden Sitzung bleibt alles).
+const RANK_KEY = 'ff-matches', RANK_KEY2 = 'ff-matches2';
+let matchCache = null;
+function packMatches(list) {
+  const names = [], idx = new Map();
+  const ni = (n) => { if (!idx.has(n)) { idx.set(n, names.length); names.push(n); } return idx.get(n); };
+  return { v: 2, n: names, m: list.map((m) => {
+    const r = [m.id, m.date, ni(m.winner), m.players.map((p) => ni(p.name))];
+    // Ältere Einträge (ganze Partien) haben andere Punktzahlen: dann die Punkte mitspeichern
+    if (m.players.some((p) => p.score !== (p.name === m.winner ? 1 : 0))) r.push(m.players.map((p) => p.score));
+    return r;
+  }) };
+}
+function unpackMatches(d) {
+  if (Array.isArray(d)) return d;  // altes Format: Liste ganzer Objekte
+  if (!d || d.v !== 2 || !Array.isArray(d.n) || !Array.isArray(d.m)) return [];
+  const out = [];
+  for (const r of d.m) {
+    if (!Array.isArray(r) || !Array.isArray(r[3])) continue;
+    const winner = d.n[r[2]];
+    out.push({ id: r[0], date: r[1], winner, players: r[3].map((i, k) => ({ name: d.n[i], score: Array.isArray(r[4]) ? r[4][k] : d.n[i] === winner ? 1 : 0 })) });
+  }
+  return out;
+}
 function loadMatches() {
-  try { const l = JSON.parse(localStorage.getItem(RANK_KEY) || '[]'); return Array.isArray(l) ? l : []; } catch (e) { return []; }
+  if (matchCache) return matchCache;
+  let l = [];
+  try {
+    const raw2 = localStorage.getItem(RANK_KEY2);
+    if (raw2) l = unpackMatches(JSON.parse(raw2));
+    else { const old = JSON.parse(localStorage.getItem(RANK_KEY) || '[]'); if (Array.isArray(old) && old.length) { l = old.map(cleanMatch).filter(Boolean); setTimeout(() => saveMatches(l), 0); } }
+  } catch (e) { l = []; }
+  matchCache = l;
+  return l;
+}
+function saveMatches(all) {
+  matchCache = all;
+  let keep = all;
+  for (let tries = 0; tries < 30 && keep.length; tries++) {
+    try { localStorage.setItem(RANK_KEY2, JSON.stringify(packMatches(keep))); return; }
+    catch (e) { keep = keep.slice(Math.ceil(keep.length * 0.1)); }  // Speicher voll: älteste 10 % weglassen
+  }
 }
 function cleanMatch(m) {
   if (!m || typeof m.id !== 'string' || !Array.isArray(m.players) || m.players.length < 2 || m.players.length > MAX_PLAYERS) return null;
@@ -562,16 +603,16 @@ function cleanMatch(m) {
   return { id: m.id.slice(0, 40), date: +m.date || 0, players, winner };
 }
 function mergeMatches(list) {
-  if (!Array.isArray(list)) return false;
-  const all = loadMatches(); const ids = new Set(all.map((m) => m.id));
+  if (!list) return false;
+  const all = loadMatches().slice(); const ids = new Set(all.map((m) => m.id));
   let added = false;
-  for (const raw of list.slice(-RANK_MAX)) {
+  for (const raw of unpackMatches(list)) {
     const m = cleanMatch(raw);
     if (m && !ids.has(m.id)) { all.push(m); ids.add(m.id); added = true; }
   }
   if (added) {
     all.sort((a, b) => a.date - b.date);
-    try { localStorage.setItem(RANK_KEY, JSON.stringify(all.slice(-RANK_MAX))); } catch (e) {}
+    saveMatches(all);
     renderRanking();
   }
   return added;
@@ -640,7 +681,7 @@ function recordWin(g) {
     players: g.players.filter((p) => !p.waiting).map((p) => ({ name: p.name, score: p === winner ? 1 : 0 })), winner: winner.name };
   mergeMatches([m]);
   renderRanking();
-  const msg = { t: 'matches', list: loadMatches() };
+  const msg = { t: 'matches', list: packMatches(loadMatches()) };
   for (const c of S.conns.values()) c.send(msg);
 }
 
@@ -843,8 +884,8 @@ function onClientConnect(conn) {
       S.conns.set(pid, conn);
       conn.send({ t: 'welcome', id: pid });
       conn.send({ t: 'chatlog', list: Chat.log.slice(-20) });
-      if (mergeMatches(m.matches)) { const msg = { t: 'matches', list: loadMatches() }; for (const c of S.conns.values()) c.send(msg); }
-      else conn.send({ t: 'matches', list: loadMatches() });
+      if (mergeMatches(m.matches)) { const msg = { t: 'matches', list: packMatches(loadMatches()) }; for (const c of S.conns.values()) c.send(msg); }
+      else conn.send({ t: 'matches', list: packMatches(loadMatches()) });
       broadcastLobby();
       return;
     }
@@ -889,7 +930,7 @@ async function joinRoom() {
         else if (m.t === 'reject') { clearTimeout(timer); reject(new Error(m.reason)); }
       };
       conn.onClose = () => { clearTimeout(timer); reject(new Error('Verbindung getrennt.')); };
-      conn.send({ t: 'join', name: f.name, pw, matches: loadMatches() });
+      conn.send({ t: 'join', name: f.name, pw, matches: packMatches(loadMatches()) });
     });
     conn.onData = onHostMessage;
     conn.onClose = () => { if (S.role === 'client') leave('Der Gastgeber hat das Spiel verlassen.'); };
@@ -1577,7 +1618,7 @@ function roundRect(x, y, w, h, r) {
 }
 
 // Für Tests von außen erreichbar
-window.Funkenfeld = { Game, S, Sound };
+window.Funkenfeld = { Game, S, Sound, loadMatches, mergeMatches, packMatches };
 // ---------- Neue Version erkennen ----------
 // GitHub Pages lässt Browser Dateien bis zu 10 Minuten zwischenspeichern. Darum fragt das Spiel
 // version.txt ohne Cache ab und bietet bei einer neuen Version einen Knopf zum Neuladen an.
