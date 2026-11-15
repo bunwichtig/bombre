@@ -141,6 +141,26 @@ body.ingame #app { max-width: 1280px; }
 .rank-side h2 { font-size: 1.05rem; margin-bottom: 6px; }
 .rank-side .ranking table { font-size: .85rem; }
 .rank-side .ranking th, .rank-side .ranking td { padding: 5px 3px; }
+/* Im Spiel: Titel antippen teilt den Einladungslink */
+body.ingame header h1, body.ingame header .sub { cursor: pointer; }
+body.ingame header h1:hover, body.ingame header .sub:hover { opacity: .85; }
+/* Board mit Siegen und Niederlagen: am PC rechts neben dem Spielfeld */
+.board-side { grid-area: board; max-width: none; margin: 0; padding: 12px; align-self: start; max-height: 100%; overflow-y: auto; }
+.board-side h2 { font-size: 1.05rem; margin-bottom: 6px; }
+.board table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+.board th, .board td { padding: 5px 3px; text-align: right; border-bottom: 1px solid var(--border); }
+.board th:first-child, .board td:first-child { text-align: left; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.board th { color: var(--muted); font-weight: 600; }
+.board .win { color: #6ee7a0; } .board .loss { color: #ff8a8a; }
+.board-in-rank { display: none; }
+@media (min-width: 1100px) {
+  .game-layout { grid-template-columns: 260px min(calc(100% - 552px), calc((100vh - 230px) * var(--ar, 1.15))) 260px;
+    grid-template-areas: ". hud ." ". ctl ." ". note ." "side stage board" ". touch ." ". btns ."; }
+}
+@media (min-width: 861px) and (max-width: 1099px) {
+  .game-layout { grid-template-areas: ". hud" ". ctl" ". note" "side stage" ". touch" ". btns" ". board"; }
+  .board-side { margin-top: 12px; }
+}
 /* Ton an/aus am PC oben rechts, etwas größer */
 @media (min-width: 861px) {
   body.ingame #btn-mute { position: fixed; top: 14px; right: 16px; z-index: 20; min-width: 0; padding: 10px 16px; font-size: 1.05rem; }
@@ -148,6 +168,9 @@ body.ingame #app { max-width: 1280px; }
 @media (max-width: 860px) {
   .game-layout { grid-template-columns: minmax(0, 1fr); grid-template-areas: "hud" "ctl" "note" "stage" "touch" "btns" "side"; }
   .game-side { contain: none; margin-top: 12px; }
+  .board-side { display: none; }
+  .board-in-rank { display: block; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); }
+  .board-in-rank::before { content: '📊 Siege & Niederlagen'; display: block; font-weight: 700; margin-bottom: 4px; }
   .chat-panel { display: contents; }
   .rank-side { max-height: none; }
 }
@@ -205,6 +228,7 @@ body.ctl-wischen #touch { justify-content: flex-end; }
 .update-bar { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 20; display: flex; align-items: center; gap: 12px;
   max-width: calc(100% - 32px); padding: 10px 12px 10px 16px; border-radius: 12px; background: var(--panel); border: 1px solid var(--accent2); box-shadow: 0 10px 30px rgba(0,0,0,.5); font-size: .9rem; }
 .update-bar button { flex: none; min-width: 0; padding: 7px 12px; font-size: .88rem; }
+.ver .build { opacity: .6; }
 .ver { text-align: center; color: var(--muted); font-size: .72rem; opacity: .6; margin: 18px 0 0; }
 
 /* Leichtere, kompaktere Optik für Start und Lobby */
@@ -336,7 +360,7 @@ h1 .re { color: var(--accent2); }
   header #btn-quit .x { display: inline; }
   header #btn-quit .lbl, .head-tools #btn-mute .lbl { display: none; }
   .head-tools #btn-mute { flex: none; min-width: 0; width: 38px; height: 38px; padding: 0; display: grid; place-items: center; font-size: 1.1rem; border-radius: 50%; }
-  body.ingame #btn-again { display: none; }
+  body.ingame #btn-again, body.ingame #btn-mode { display: none; }
   body.ingame .head-tools .ctl-pick label span { padding: 5px 10px; }
 }
 @media (max-width: 860px) {

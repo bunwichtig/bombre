@@ -56,3 +56,8 @@ Dann `http://localhost:8000/?local` in zwei Tabs öffnen. Mit `?local` laufen di
 ## Technik für andere Spiele
 
 Wie der Online-Mehrspielermodus funktioniert und wie man ihn in ein anderes Spiel einbaut, steht in [docs/online-multiplayer.md](docs/online-multiplayer.md).
+
+## Versionen
+Die Versionsnummer steht unten im Spiel (z. B. „Version 1.0.0 · a1b2c3d“, dahinter der Commit).
+Schema 1.x.y: größere Neuerungen zählen die mittlere Zahl hoch (1.1.0), kleine Korrekturen die letzte (1.0.1).
+Die Nummer steht in `index.html` (`<p class="ver">`) und wird mit jeder Änderung angepasst.

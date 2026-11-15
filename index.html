@@ -9,7 +9,7 @@
 <body>
 <main id="app">
   <header>
-    <h1>Bomb<span class="re">Re</span></h1>
+    <h1 title="Im Spiel: antippen, um den Einladungslink zu teilen">Bomb<span class="re">Re</span></h1>
     <p class="sub">Bomben legen, Kisten sprengen, als Letzter stehen bleiben. Für 2 bis 6 Spieler.</p>
     <div id="head-tools" class="head-tools"></div>
   </header>
@@ -179,6 +179,10 @@
           <div class="ranking"></div>
         </details>
       </aside>
+      <aside id="board-side" class="panel board-side">
+        <h2>📊 Siege &amp; Niederlagen</h2>
+        <div class="board"></div>
+      </aside>
       <div class="game-main">
         <div id="hud"></div>
         <div class="ctl-pick" role="radiogroup" aria-label="Handysteuerung">
@@ -205,6 +209,7 @@
         </div>
         <div class="row center">
           <button id="btn-again" class="hidden secondary" title="Zurück zur Lobby, Siege dieser Sitzung auf 0">Zur Lobby</button>
+          <button id="btn-mode" class="hidden secondary" type="button">⚙️ Klassisch</button>
           <button id="btn-mute" class="secondary"></button>
         </div>
       </div>
@@ -215,7 +220,7 @@
     <span>Es gibt eine neue Version von BombRe.</span>
     <button id="btn-update" type="button">Jetzt laden</button>
   </div>
-  <p class="ver">Version __VERSION__</p>
+  <p class="ver">Version 1.0.0 <span class="build">· __VERSION__</span></p>
   <!-- Chat: wird je nach Bildschirm in die Lobby oder neben das Spielfeld gehängt -->
   <div id="chat" class="chat hidden">
     <div class="chat-grip" aria-hidden="true"></div>
