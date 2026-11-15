@@ -36,14 +36,14 @@ const spawns = () => { const mx = (W - 1) >> 1; return [[1, 1], [W - 2, H - 2], 
 const CLASSIC_SIZE = { 4: [15, 13], 5: [17, 13], 6: [19, 15] };
 const MODES = { klassisch: 'Klassisch', individuell: 'Individuell' };
 const SIZES = { klein: [11, 9], mittel: [15, 13], gross: [19, 15], riesig: [23, 17] };
-const SIZE_LABEL = { klein: 'Klein (11 × 9)', mittel: 'Mittel (15 × 13)', gross: 'Groß (19 × 15)', riesig: 'Riesig (23 × 17)' };
+const SIZE_LABEL = { auto: 'Automatisch (nach Spielerzahl)', klein: 'Klein (11 × 9)', mittel: 'Mittel (15 × 13)', gross: 'Groß (19 × 15)', riesig: 'Riesig (23 × 17)' };
 const VARIANTS = { klassisch: 'Klassisch', schrumpf: 'Schrumpfendes Feld' };
 const SHRINK_AT = 120;       // Runden haben kein Zeitlimit; im Modus „Schrumpfendes Feld“ fallen ab 2:00 Blöcke
 const SHRINK_DUR = 58;       // so lange dauert das Schrumpfen, bis das Feld zu ist
 const MEGA_LIST = ['mega', 'pierce', 'shield', 'ghost', 'remote'];
 const MEGA_NAME = { mega: 'Megafeuer', pierce: 'Durchschlag', shield: 'Schild', ghost: 'Geist', remote: 'Fernzünder' };
 // megaW: Gewichtung der einzelnen Mega-Items untereinander (0 = kommt nicht vor)
-const DEFAULT_SETTINGS = { mode: 'klassisch', players: 4, variant: 'klassisch', size: 'mittel', items: 30, wins: WIN_ROUNDS, mega: 10,
+const DEFAULT_SETTINGS = { mode: 'klassisch', players: 4, variant: 'klassisch', size: 'auto', items: 30, wins: WIN_ROUNDS, mega: 10,
   megaW: Object.fromEntries(MEGA_LIST.map((t) => [t, 100])) };
 function cleanSettings(o) {
   o = o || {};
@@ -52,7 +52,7 @@ function cleanSettings(o) {
     mode,
     players: MAX_PLAYERS, // feste Obergrenze, keine Einstellung mehr
     variant: VARIANTS[o.variant] ? o.variant : DEFAULT_SETTINGS.variant,
-    size: SIZES[o.size] ? o.size : DEFAULT_SETTINGS.size,
+    size: SIZES[o.size] || o.size === 'auto' ? o.size : DEFAULT_SETTINGS.size,
     items: Math.max(0, Math.min(100, Math.round((+o.items || 0) / 5) * 5)),
     wins: Math.max(1, Math.min(MAX_WINS, o.wins | 0 || WIN_ROUNDS)),
     // Anteil der Mega-Items an allen Power-ups in Prozent (früher ein Schalter an/aus)
@@ -67,11 +67,10 @@ function cleanSettings(o) {
 // Die tatsächlich gespielten Regeln. Klassisch: feste Regeln ohne Mega-Items, Feld passend zur Spielerzahl.
 function rulesFor(st, joined) {
   st = cleanSettings(st);
-  if (st.mode === 'klassisch') {
-    const n = Math.max(4, Math.min(6, joined | 0));
-    return { ...st, variant: 'klassisch', items: 30, wins: WIN_ROUNDS, mega: 0, dims: CLASSIC_SIZE[n] };
-  }
-  return { ...st, dims: SIZES[st.size] };
+  // Feldgröße gilt in beiden Modi; „Automatisch“ wächst mit der Spielerzahl (bis 4: 15 × 13, 5: 17 × 13, 6: 19 × 15)
+  const dims = SIZES[st.size] || CLASSIC_SIZE[Math.max(4, Math.min(6, joined | 0))];
+  if (st.mode === 'klassisch') return { ...st, variant: 'klassisch', items: 30, wins: WIN_ROUNDS, mega: 0, dims };
+  return { ...st, dims };
 }
 function applySize(w, h) {
   if (w === W && h === H) return;
@@ -584,23 +583,42 @@ function renderRanking() {
       rows.slice(0, 20).map((r, i) => `<tr><td>${['🥇', '🥈', '🥉'][i] || i + 1}</td><td>${esc(r.name)}</td><td>${r.wins}</td></tr>`).join('') +
       '</tbody></table>'
     : '<p class="muted">Noch keine Siege. Nach der ersten gewonnenen Runde steht hier, wer vorne liegt.</p>';
-  const board = renderBoard(rows);
+  const board = renderBoard();
   document.querySelectorAll('.ranking').forEach((el) => { el.innerHTML = html; });
   // Handy: Siege & Niederlagen unten in der aufklappbaren Rangliste im Spiel
   const rf = document.querySelector('#rank-fold .ranking');
   if (rf) rf.insertAdjacentHTML('beforeend', '<div class="board board-in-rank">' + board + '</div>');
 }
-// Board: Siege und Niederlagen je Spieler (Niederlage = Runde mitgespielt, aber nicht gewonnen)
-function renderBoard(rows) {
-  rows = [...rows].sort((a, b) => (b.wins - b.losses) - (a.wins - a.losses) || b.wins - a.wins || b.last - a.last);
-  const html = rows.length
-    ? '<table><thead><tr><th>Name</th><th title="Gewonnene Runden">Siege</th><th title="Runden mitgespielt, aber nicht gewonnen">Niederl.</th><th title="Siege minus Niederlagen">±</th><th title="Anteil gewonnener Runden">Quote</th></tr></thead><tbody>' +
-      rows.slice(0, 20).map((r) => {
-        const d = r.wins - r.losses, n = r.wins + r.losses;
-        return `<tr><td>${esc(r.name)}</td><td class="win">${r.wins}</td><td class="loss">${r.losses}</td>` +
-          `<td class="${d > 0 ? 'win' : d < 0 ? 'loss' : ''}">${d > 0 ? '+' : ''}${d}</td><td>${n ? Math.round(r.wins / n * 100) : 0} %</td></tr>`;
-      }).join('') + '</tbody></table>'
-    : '<p class="muted">Noch keine Runden gespielt. Nach jeder gewonnenen Runde stehen hier Siege und Niederlagen.</p>';
+// Board „Direktvergleich“: nur die Spieler, die gerade im Raum sind, gegeneinander.
+// Gezählt werden gespeicherte Runden, in denen beide dabei waren: Wer gewinnt, holt einen Sieg gegen jeden anderen.
+function renderBoard() {
+  const cur = ((S.view && S.view.players) || []).map((p) => ({ key: p.name.trim().toLowerCase(), name: p.name, color: p.color }));
+  const keys = new Set(cur.map((p) => p.key));
+  const h2h = new Map();  // "sieger|verlierer" -> Anzahl
+  for (const m of loadMatches()) {
+    const w = (m.winner || '').trim().toLowerCase();
+    if (!keys.has(w)) continue;
+    for (const p of m.players) {
+      const l = p.name.trim().toLowerCase();
+      if (l !== w && keys.has(l)) h2h.set(w + '|' + l, (h2h.get(w + '|' + l) || 0) + 1);
+    }
+  }
+  const n = (a, b) => h2h.get(a + '|' + b) || 0;
+  const dot = (p) => `<span class="dot" style="background:${esc(p.color || '#888')}"></span>`;
+  let html;
+  if (cur.length < 2) html = '<p class="muted">Sobald mindestens zwei im Raum sind, steht hier, wer gegen wen wie oft gewonnen hat.</p>';
+  else {
+    const rows = cur.map((p) => ({ ...p, s: cur.reduce((t, q) => t + n(p.key, q.key), 0), l: cur.reduce((t, q) => t + n(q.key, p.key), 0) }))
+      .sort((a, b) => (b.s - b.l) - (a.s - a.l) || b.s - a.s);
+    html = '<table><thead><tr><th>Name</th><th title="Siege gegen die anderen hier">Siege</th><th title="Niederlagen gegen die anderen hier">Niederl.</th></tr></thead><tbody>' +
+      rows.map((r) => `<tr><td>${dot(r)}${esc(r.name)}</td><td class="win">${r.s}</td><td class="loss">${r.l}</td></tr>`).join('') + '</tbody></table>';
+    const pairs = [];
+    for (let i = 0; i < cur.length; i++) for (let j = i + 1; j < cur.length; j++) {
+      const a = cur[i], b = cur[j], x = n(a.key, b.key), y = n(b.key, a.key);
+      pairs.push(`<li><span class="pa">${dot(a)}${esc(a.name)}</span><b class="${x > y ? 'win' : x < y ? 'loss' : ''}">${x} : ${y}</b><span class="pb">${esc(b.name)}${dot(b)}</span></li>`);
+    }
+    html += '<h3>Gegeneinander</h3><ul class="pairs">' + pairs.join('') + '</ul>';
+  }
   document.querySelectorAll('.board').forEach((el) => { el.innerHTML = html; });
   return html;
 }
@@ -963,7 +981,7 @@ function renderSettings(st, isHost) {
   // Zünder-Knopf nur im Modus Individuell (bei Klassisch gibt es keine Mega-Items)
   document.body.classList.toggle('mode-klassisch', classic);
   $('mode-note').textContent = classic
-    ? 'Klassische Regeln: 30 % Power-ups, keine Mega-Items. Das Feld wächst mit der Zahl der Spieler (bis 6). Es wird endlos weitergespielt.'
+    ? 'Klassische Regeln: 30 % Power-ups, keine Mega-Items. Es wird endlos weitergespielt.'
     : 'Alles selbst einstellen: Variante, Feldgröße, Power-ups und Mega-Items. Es wird endlos weitergespielt.';
   $('set-items-val').textContent = st.items + ' %';
   $('set-mega-val').textContent = st.mega + ' %';
@@ -1165,7 +1183,18 @@ function updateModeBtn() {
   const pending = S.game.phase !== 'lobby' && S.game.rules.mode !== st.mode;
   b.innerHTML = `⚙️ ${MODES[st.mode]}${pending ? ' <small>(ab nächster Runde)</small>' : ''}`;
   b.title = `Spielmodus: ${MODES[st.mode]}. Klicken für ${MODES[next]} – gilt ab der nächsten Runde.`;
+  const sz = $('game-size');
+  if (document.activeElement !== sz) sz.value = st.size;
+  const [w, h] = rulesFor(st, S.game.players.length).dims;
+  sz.title = `Feldgröße jetzt ${W} × ${H}` + (w !== W || h !== H ? `, ab nächster Runde ${w} × ${h}` : '');
+  $('game-size-note').textContent = w !== W || h !== H ? `ab nächster Runde ${w} × ${h}` : '';
 }
+$('game-size').onchange = () => {
+  if (S.role !== 'host') return;
+  S.game.settings = cleanSettings({ ...S.game.settings, size: $('game-size').value });
+  try { localStorage.setItem('ff-settings', JSON.stringify(S.game.settings)); } catch (e) {}
+  updateModeBtn();
+};
 $('btn-mode').onclick = () => {
   if (S.role !== 'host') return;
   const st = cleanSettings(S.game.settings);
@@ -1354,7 +1383,7 @@ function soundsFor(v) {
 
 // ---------- Zeichnen ----------
 const cv = $('cv'), ctx = cv.getContext('2d');
-let lastHud = '';
+let lastHud = '', lastWho = '';
 function draw(v, isHost) {
   if (v.w && v.h) applySize(v.w, v.h);
   soundsFor(v);
@@ -1391,11 +1420,15 @@ function draw(v, isHost) {
     (p.waiting ? ' <small>👀 ab nächster Runde</small>' : '') +
     (p.id === S.myId ? ` <small>💣${p.bombs} 🔥${p.range} 👟${p.speed}${p.kick ? ' 🦶' : ''}${p.pierce ? ' 💥' : ''}${p.shield ? ' 🛡️' : ''}${p.ghost ? ' 👻' + p.ghost : ''}${p.remote ? ' 🧨 Strg' : ''}</small>` : '') + '</span>').join('');
   if (hud !== lastHud) { $('hud').innerHTML = hud; lastHud = hud; }
+  // Andere Spieler im Raum oder neuer Name? Dann den Direktvergleich neu aufbauen
+  const who = v.players.map((p) => p.name + p.color).join('|');
+  if (who !== lastWho) { lastWho = who; renderRanking(); }
   const ov = $('overlay');
   ov.classList.toggle('hidden', !v.msg);
   if (v.msg && ov.textContent !== v.msg) ov.textContent = v.msg;
   $('btn-again').classList.toggle('hidden', !isHost);
   $('btn-mode').classList.toggle('hidden', !isHost);
+  $('game-size-wrap').classList.toggle('hidden', !isHost);
   if (isHost) updateModeBtn();
 }
 
