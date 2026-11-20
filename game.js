@@ -35,7 +35,8 @@ const COLORS = ['#ff8a3d', '#3dc6ff', '#7ee06a', '#e56bff', '#ffd23d', '#ff5c8a'
 // Megafeuer (zeitlich begrenzt): volle Reichweite und eine Bombe mehr, solange es wirkt
 const rangeOf = (p) => p.mega > 0 ? 10 : p.range;
 const bombsOf = (p) => Math.min(8, p.maxBombs + (p.mega > 0 ? 1 : 0));
-const spawns = () => { const mx = (W - 1) >> 1; return [[1, 1], [W - 2, H - 2], [W - 2, 1], [1, H - 2], [mx, 1], [mx, H - 2]]; };
+const spawnsFor = (w, h) => { const mx = (w - 1) >> 1; return [[1, 1], [w - 2, h - 2], [w - 2, 1], [1, h - 2], [mx, 1], [mx, h - 2]]; };
+const spawns = () => spawnsFor(W, H);
 // Klassischer Modus: Feldgröße nach Spielerzahl (4: klassisch, 5–6: etwas größer)
 const CLASSIC_SIZE = { 4: [15, 13], 5: [17, 13], 6: [19, 15] };
 const MODES = { klassisch: 'Klassisch', individuell: 'Individuell' };
@@ -44,10 +45,126 @@ const SIZE_LABEL = { auto: 'Automatisch (nach Spielerzahl)', klein: 'Klein (11 �
 const VARIANTS = { klassisch: 'Klassisch', schrumpf: 'Schrumpfendes Feld' };
 const SHRINK_AT = 120;       // Runden haben kein Zeitlimit; im Modus „Schrumpfendes Feld“ fallen ab 2:00 Blöcke
 const SHRINK_DUR = 58;       // so lange dauert das Schrumpfen, bis das Feld zu ist
+// ---------- Karten: Anordnung der festen Blöcke ----------
+// Drei feste Karten, sechs Karten, die jede Runde zufällig neu gebaut werden, und „Zufall“ (jede Runde eine andere Karte).
+// Alle Karten sind an beiden Achsen gespiegelt (fair für jeden Startplatz) und werden so korrigiert, dass jedes freie Feld erreichbar ist.
+const MAPS = {
+  klassisch: { name: 'Klassisch', fixed: true }, kreuz: { name: 'Kreuz', fixed: true }, arena: { name: 'Arena', fixed: true },
+  ringe: { name: 'Ringe' }, diagonalen: { name: 'Diagonalen' }, rauten: { name: 'Rauten' },
+  inseln: { name: 'Inseln' }, gaenge: { name: 'Gänge' }, streuung: { name: 'Streuung' },
+};
+const MAP_IDS = Object.keys(MAPS);
+const MAP_GEN = {
+  // c: Feld im oberen linken Viertel (x ≤ cx, y ≤ cy), r: Zufall, p: Werte, die einmal pro Karte gewürfelt werden
+  klassisch: { f: (c) => c.x % 2 === 0 && c.y % 2 === 0 },
+  kreuz: { f: (c) => {
+    const ax = c.cx - c.x, ay = c.cy - c.y;
+    if (ax <= 1 && ay <= 1) return !(ax === 1 && ay === 1);
+    if (ax === 0 && c.y >= 2 && c.y % 2 === 0) return true;
+    if (ay === 0 && c.x >= 2 && c.x % 2 === 0) return true;
+    return c.x % 4 === 2 && c.y % 4 === 2 && ax > 2 && ay > 2; } },
+  arena: { f: (c) => {
+    const rx = (c.cx - c.x) / c.cx, ry = (c.cy - c.y) / c.cy;
+    if (c.x % 2 || c.y % 2) return false;
+    if (rx > 0.42 || ry > 0.42) return true;
+    return rx > 0.15 && rx < 0.3 && ry > 0.15 && ry < 0.35; } },
+  ringe: {
+    setup: (r, cx, cy) => {
+      const off = r() < 0.5 ? 0 : 1, lim = Math.min(cx, cy), rings = {};
+      for (let d = 2 + off; d < lim; d += 2) {
+        const pick = (a, b) => { const set = new Set(); const n = 1 + (r() < 0.5 ? 1 : 0); for (let i = 0; i < n; i++) set.add(a + Math.floor(r() * (b - a + 1))); return set; };
+        rings[d] = { top: pick(d + 1, cx), left: pick(d + 1, cy), corner: r() < 0.4 };
+      }
+      return { rings };
+    },
+    f: (c, r, p) => {
+      const d = Math.min(c.x, c.y), ring = p.rings[d];
+      if (!ring) return false;
+      if (c.x === d && c.y === d) return !ring.corner;
+      if (c.y === d && ring.top.has(c.x)) return false;
+      if (c.x === d && ring.left.has(c.y)) return false;
+      return true; } },
+  diagonalen: {
+    setup: (r, cx, cy) => {
+      const per = 2 + Math.floor(r() * 3);
+      return { thick: 0.5 + r() * 0.25, per, phase: Math.floor(r() * per), off: r() < 0.5 ? Math.round(Math.min(cx, cy) * (0.4 + r() * 0.2)) : 0 };
+    },
+    f: (c, r, p) => {
+      if (c.x < 2 || c.y < 2 || (c.cx - c.x <= 1 && c.cy - c.y <= 1)) return false;
+      const d = (c.x * c.cy - c.y * c.cx) / Math.hypot(c.cx, c.cy);
+      const near = Math.abs(d) < p.thick || (p.off && (Math.abs(d - p.off) < p.thick || Math.abs(d + p.off) < p.thick));
+      return near && c.x % p.per !== p.phase; } },
+  rauten: {
+    setup: (r, cx, cy) => {
+      const m = Math.min(cx, cy);
+      return { r1: Math.max(2, Math.round(m * (0.35 + r() * 0.25))), r2: Math.round(m * (0.95 + r() * 0.35)), gap: 0.12 + r() * 0.15 };
+    },
+    f: (c, r, p) => {
+      const ax = c.cx - c.x, ay = c.cy - c.y, D = ax + ay;
+      if ((D !== p.r1 && D !== p.r2) || ax === 0 || ay === 0) return false;
+      return r() > p.gap; } },
+  inseln: {
+    setup: (r, cx, cy) => {
+      const sp = r() < 0.5 ? 3 : 4, cells = new Set(), shapes = [[1, 1], [2, 1], [1, 2], [2, 2], [2, 2]];
+      for (let y0 = 2; y0 < cy; y0 += sp) for (let x0 = 2; x0 < cx; x0 += sp) {
+        if (r() < 0.15) continue;
+        const [w, h] = shapes[Math.floor(r() * shapes.length)];
+        for (let y = y0; y < y0 + h && y <= cy; y++) for (let x = x0; x < x0 + w && x <= cx; x++) cells.add(x + ',' + y);
+      }
+      if (r() < 0.5) cells.add(cx + ',' + cy);
+      return { cells };
+    },
+    f: (c, r, p) => p.cells.has(c.x + ',' + c.y) },
+  gaenge: {
+    setup: (r) => { const gp = 4 + Math.floor(r() * 3); return { vert: r() < 0.35, sp: r() < 0.5 ? 3 : 4, gp, phase: 1 + Math.floor(r() * (gp - 1)) }; },
+    f: (c, r, p) => {
+      const [a, b, ca, cb] = p.vert ? [c.y, c.x, c.cy, c.cx] : [c.x, c.y, c.cx, c.cy];
+      if (b === cb) return a % 3 === 2 && a >= 3;
+      if (b < 2 || b % p.sp !== 2) return false;
+      return a >= 2 && a !== ca && a % p.gp !== p.phase; } },
+  streuung: { setup: (r) => ({ dens: 0.16 + r() * 0.14 }), f: (c, r, p) => r() < p.dens },
+};
+// Liefert ein Feld mit WALL/EMPTY; slots: Startplätze, die frei bleiben müssen
+function genWalls(id, w, h, r, slots) {
+  const gen = MAP_GEN[id] || MAP_GEN.klassisch, g = new Array(w * h).fill(EMPTY), cx = (w - 1) / 2, cy = (h - 1) / 2;
+  const p = gen.setup ? gen.setup(r, cx, cy) : {};
+  const mir = (x, y) => [[x, y], [w - 1 - x, y], [x, h - 1 - y], [w - 1 - x, h - 1 - y]];
+  for (let y = 0; y <= cy; y++) for (let x = 0; x <= cx; x++) {
+    const v = x === 0 || y === 0 || gen.f({ x, y, cx, cy }, r, p) ? WALL : EMPTY;
+    for (const [a, b] of mir(x, y)) g[b * w + a] = v;
+  }
+  // Startplätze: zwei Felder gerade Luft (die Ecke diagonal darf bleiben, wie beim klassischen Raster)
+  const sp = spawnsFor(w, h);
+  for (const s of slots) {
+    const [sx, sy] = sp[s];
+    for (const [dx, dy] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1], [2, 0], [-2, 0], [0, 2], [0, -2]]) {
+      const x = sx + dx, y = sy + dy;
+      if (x > 0 && y > 0 && x < w - 1 && y < h - 1) g[y * w + x] = EMPTY;
+    }
+  }
+  // Abgeschnittene Bereiche öffnen (symmetrisch), bis alles vom ersten Startplatz aus erreichbar ist
+  for (let guard = 0; guard < 300; guard++) {
+    const seen = new Uint8Array(w * h), q = [w + 1]; seen[w + 1] = 1;
+    while (q.length) { const i = q.pop(); for (const n of [i - 1, i + 1, i - w, i + w]) if (!seen[n] && g[n] !== WALL) { seen[n] = 1; q.push(n); } }
+    if (!g.some((v, i) => v !== WALL && !seen[i])) break;
+    let target = -1, fallback = -1;
+    for (let y = 1; y < h - 1 && target < 0; y++) for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x, nb = [i - 1, i + 1, i - w, i + w];
+      if (g[i] !== WALL || !nb.some((n) => seen[n])) continue;
+      if (fallback < 0) fallback = i;
+      if (nb.some((n) => g[n] !== WALL && !seen[n])) { target = i; break; }
+    }
+    if (target < 0) target = fallback;
+    if (target < 0) break;
+    for (const [a, b] of mir(target % w, (target / w) | 0)) g[b * w + a] = EMPTY;
+  }
+  return g;
+}
+function seededRandom(seed) { let s = seed >>> 0 || 1; return () => { s ^= s << 13; s >>>= 0; s ^= s >> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; }; }
 const MEGA_LIST = ['mega', 'pierce', 'shield', 'ghost', 'remote'];
 const MEGA_NAME = { mega: 'Megafeuer', pierce: 'Durchschlag', shield: 'Schild', ghost: 'Geist', remote: 'Fernzünder' };
 // megaW: Gewichtung der einzelnen Mega-Items untereinander (0 = kommt nicht vor)
-const DEFAULT_SETTINGS = { mode: 'klassisch', players: 4, variant: 'klassisch', size: 'auto', items: 30, wins: WIN_ROUNDS, mega: 10,
+const DEFAULT_SETTINGS = { mode: 'klassisch', players: 4, variant: 'klassisch', size: 'auto', map: 'klassisch', pause: 4, items: 30, wins: WIN_ROUNDS, mega: 10,
   megaW: Object.fromEntries(MEGA_LIST.map((t) => [t, 100])) };
 function cleanSettings(o) {
   o = o || {};
@@ -56,8 +173,11 @@ function cleanSettings(o) {
     mode,
     players: MAX_PLAYERS, // feste Obergrenze, keine Einstellung mehr
     variant: VARIANTS[o.variant] ? o.variant : DEFAULT_SETTINGS.variant,
+    map: MAPS[o.map] || o.map === 'zufall' ? o.map : DEFAULT_SETTINGS.map,
     size: SIZES[o.size] || o.size === 'auto' ? o.size : DEFAULT_SETTINGS.size,
     items: Math.max(0, Math.min(100, Math.round((+o.items || 0) / 5) * 5)),
+    // Pause mit Countdown vor jeder Runde, in Sekunden
+    pause: o.pause === undefined ? DEFAULT_SETTINGS.pause : Math.max(2, Math.min(10, Math.round(+o.pause) || DEFAULT_SETTINGS.pause)),
     wins: Math.max(1, Math.min(MAX_WINS, o.wins | 0 || WIN_ROUNDS)),
     // Anteil der Mega-Items an allen Power-ups in Prozent (früher ein Schalter an/aus)
     mega: o.mega === true || o.mega === undefined ? DEFAULT_SETTINGS.mega : o.mega === false ? 0
@@ -227,13 +347,14 @@ class Game {
   bombAt(x, y) { return this.bombs.find((b) => b.x === x && b.y === y); }
 
   buildMap() {
+    // Karte wählen: bei „Zufall“ jede Runde eine andere als zuletzt
+    let id = this.settings.map || 'klassisch';
+    if (id === 'zufall') { const pool = MAP_IDS.filter((m) => m !== this.mapId); id = pool[Math.floor(Math.random() * pool.length)]; }
+    else if (!MAPS[id]) id = 'klassisch';
+    this.mapId = id;
     const g = this.grid;
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
-      let v = EMPTY;
-      if (x === 0 || y === 0 || x === W - 1 || y === H - 1 || (x % 2 === 0 && y % 2 === 0)) v = WALL;
-      else if (Math.random() < 0.72) v = CRATE;
-      g[y * W + x] = v;
-    }
+    const walls = genWalls(id, W, H, Math.random, this.players.map((p) => p.slot));
+    for (let i = 0; i < W * H; i++) g[i] = walls[i] === WALL ? WALL : Math.random() < 0.72 ? CRATE : EMPTY;
     // Startecken freiräumen
     for (const [sx, sy] of spawns()) {
       for (const [x, y] of [[sx, sy], [sx + 1, sy], [sx - 1, sy], [sx, sy + 1], [sx, sy - 1]]) if (g[y * W + x] === CRATE) g[y * W + x] = EMPTY;
@@ -251,28 +372,43 @@ class Game {
     this.startRound();
   }
   startRound() {
-    this.round++;
-    for (const p of this.players) p.waiting = false;
+    const active = this.players.filter((p) => !p.afk).length;
+    if (active > 0 || !this.round) this.round++;
+    // Wer AFK ist, setzt aus: kein Startplatz, zählt weder als Sieger noch als Verlierer
+    for (const p of this.players) p.waiting = !!p.afk;
     // Regeln zu jeder Runde neu: Klassisch passt das Feld an die Spielerzahl an, und ein im Spiel
     // umgeschalteter Modus (Zahnrad-Knopf) gilt ab hier
-    const before = this.rules.mode;
     this.rules = rulesFor(this.settings, this.players.length);
     const [w, h] = this.rules.dims;
     if (w !== W || h !== H) { applySize(w, h); this.grid = new Array(W * H).fill(EMPTY); }
-    if (before !== this.rules.mode && typeof broadcastLobby === 'function') setTimeout(broadcastLobby, 0);
+    // Einstellungen könnten im Spiel geändert worden sein: allen den aktuellen Stand schicken
+    if (this.round > 1 && typeof broadcastLobby === 'function') setTimeout(() => { broadcastLobby(); updateModeBtn(); }, 0);
     this.buildMap();
     this.bombs = []; this.flames = []; this.items = [];
     this.players.forEach((p) => {
       const [x, y] = spawns()[p.slot];
-      Object.assign(p, { x, y, alive: true, dir: 'down', moving: false, maxBombs: 1, range: 2, speed: BASE_SPEED, kick: false, pierce: 0, shield: false, ghost: 0, grace: 0, mega: 0, remote: 0 });
+      Object.assign(p, { x, y, alive: !p.afk, dir: 'down', moving: false, maxBombs: 1, range: 2, speed: BASE_SPEED, kick: false, pierce: 0, shield: false, ghost: 0, grace: 0, mega: 0, remote: 0 });
       p.lastBomb = p.input.bomb; p.lastDet = p.input.det;
     });
     this.clock = 0; // zählt die Spielzeit der Runde hoch, es gibt kein Zeitlimit
     this.shrink = this.rules.variant === 'schrumpf' ? this.spiral() : [];
     this.shrinkTimer = 0;
-    this.phase = 'play';
-    this.phaseTimer = 1.2;
-    this.msg = 'Runde ' + this.round;
+    this.phase = 'ready';
+    this.cdTotal = this.settings.pause || DEFAULT_SETTINGS.pause;
+    this.phaseTimer = this.cdTotal;
+    this.msg = active ? 'Runde ' + this.round + ' · ' + MAPS[this.mapId].name : 'Alle sind AFK';
+  }
+  // AFK an/aus. Mitten in der Runde scheidet man sofort aus, ohne als Verlierer zu zählen.
+  setAfk(id, on) {
+    const p = this.players.find((q) => q.id === id);
+    if (!p || !!p.afk === !!on) return;
+    p.afk = !!on;
+    if (!on || this.phase === 'lobby') return;
+    if (p.alive || !p.waiting) { p.alive = false; p.waiting = true; }
+    if (this.phase !== 'play') return;
+    const left = this.players.filter((q) => !q.waiting);
+    // Bleibt nur einer übrig, gibt es keinen geschenkten Sieg: Die Runde wird abgebrochen
+    if (left.length < 2) { this.msg = 'Runde abgebrochen (AFK)'; this.phase = 'roundEnd'; this.phaseTimer = 2; }
   }
 
   // Reihenfolge der Felder von außen nach innen, im Uhrzeigersinn
@@ -417,6 +553,12 @@ class Game {
   step(dt) {
     this.time += dt;
     if (this.phase === 'lobby' || this.phase === 'matchEnd') return;
+    if (this.phase === 'ready') {
+      // Countdown vor der Runde: Feld steht schon, niemand bewegt sich
+      this.phaseTimer -= dt;
+      if (this.phaseTimer <= 0) { this.phase = 'play'; this.phaseTimer = 0; this.msg = ''; }
+      return;
+    }
     if (this.phase === 'roundEnd') {
       this.phaseTimer -= dt;
       this.flames.forEach((f) => (f.t -= dt)); this.flames = this.flames.filter((f) => f.t > 0);
@@ -517,7 +659,9 @@ class Game {
   checkRoundEnd(force) {
     if (this.phase !== 'play') return;
     const alive = this.players.filter((p) => p.alive);
-    const solo = this.players.filter((p) => !p.waiting).length === 1;
+    const active = this.players.filter((p) => !p.waiting).length;
+    if (!active) { this.phase = 'roundEnd'; this.phaseTimer = 2; this.msg = 'Alle sind AFK'; return; }
+    const solo = active === 1;
     const over = force || (solo ? alive.length === 0 : alive.length <= 1);
     if (!over) return;
     if (alive.length === 1 && !solo) {
@@ -527,17 +671,17 @@ class Game {
       this.msg = w.name + ' gewinnt die Runde';
     } else this.msg = solo ? 'Erwischt!' : 'Unentschieden';
     this.phase = 'roundEnd';
-    this.phaseTimer = 3;
+    this.phaseTimer = 2;
   }
 
   snapshot() {
     return {
-      t: 'state', w: W, h: H, wins: this.rules.wins, variant: this.rules.variant, phase: this.phase, round: this.round, msg: this.msg, clock: Math.max(0, Math.ceil(this.clock)),
+      t: 'state', w: W, h: H, wins: this.rules.wins, cd: this.phase === 'ready' ? +this.phaseTimer.toFixed(2) : 0, cdT: this.cdTotal || 4, variant: this.rules.variant, phase: this.phase, round: this.round, msg: this.msg, clock: Math.max(0, Math.ceil(this.clock)),
       grid: this.grid.join(''),
       players: this.players.map((p) => ({ id: p.id, name: p.name, color: p.color, score: p.score, alive: p.alive,
         x: +p.x.toFixed(3), y: +p.y.toFixed(3), dir: p.dir, moving: p.moving, bombs: bombsOf(p), range: rangeOf(p), mega: Math.ceil(p.mega),
         speed: Math.round((p.speed - BASE_SPEED) / SPEED_STEP), kick: p.kick,
-        pierce: Math.ceil(p.pierce), shield: p.shield, ghost: Math.ceil(p.ghost), grace: p.grace > 0, remote: Math.ceil(p.remote), waiting: !!p.waiting })),
+        pierce: Math.ceil(p.pierce), shield: p.shield, ghost: Math.ceil(p.ghost), grace: p.grace > 0, remote: Math.ceil(p.remote), waiting: !!p.waiting, afk: !!p.afk })),
       bombs: this.bombs.map((b) => [b.x, b.y, +b.fuse.toFixed(2), b.remote ? 1 : 0]),
       flames: this.flames.map((f) => [f.x, f.y]),
       items: this.items.map((i) => [i.x, i.y, i.type]),
@@ -549,9 +693,50 @@ class Game {
 // Jeder Rundensieg wird als Eintrag gespeichert (im Browser, localStorage). Ältere Einträge stammen
 // noch aus ganzen Spielen; dort zählen die gewonnenen Runden (score) genauso als Siege.
 // Beim Beitreten tauschen Gastgeber und Mitspieler ihre Listen aus, so haben alle denselben Stand.
-const RANK_KEY = 'ff-matches', RANK_MAX = 300;
+// Kein Limit mehr: alle Runden bleiben erhalten. Gespeichert und verschickt wird kompakt
+// (jeder Name nur einmal, Runden als kurze Listen); passt der Browser-Speicher irgendwann nicht mehr,
+// fallen nur dann die ältesten Runden aus dem Speicher (in der laufenden Sitzung bleibt alles).
+const RANK_KEY = 'ff-matches', RANK_KEY2 = 'ff-matches2';
+let matchCache = null;
+function packMatches(list) {
+  const names = [], idx = new Map();
+  const ni = (n) => { if (!idx.has(n)) { idx.set(n, names.length); names.push(n); } return idx.get(n); };
+  return { v: 2, n: names, m: list.map((m) => {
+    const r = [m.id, m.date, ni(m.winner), m.players.map((p) => ni(p.name))];
+    // Ältere Einträge (ganze Partien) haben andere Punktzahlen: dann die Punkte mitspeichern
+    if (m.players.some((p) => p.score !== (p.name === m.winner ? 1 : 0))) r.push(m.players.map((p) => p.score));
+    return r;
+  }) };
+}
+function unpackMatches(d) {
+  if (Array.isArray(d)) return d;  // altes Format: Liste ganzer Objekte
+  if (!d || d.v !== 2 || !Array.isArray(d.n) || !Array.isArray(d.m)) return [];
+  const out = [];
+  for (const r of d.m) {
+    if (!Array.isArray(r) || !Array.isArray(r[3])) continue;
+    const winner = d.n[r[2]];
+    out.push({ id: r[0], date: r[1], winner, players: r[3].map((i, k) => ({ name: d.n[i], score: Array.isArray(r[4]) ? r[4][k] : d.n[i] === winner ? 1 : 0 })) });
+  }
+  return out;
+}
 function loadMatches() {
-  try { const l = JSON.parse(localStorage.getItem(RANK_KEY) || '[]'); return Array.isArray(l) ? l : []; } catch (e) { return []; }
+  if (matchCache) return matchCache;
+  let l = [];
+  try {
+    const raw2 = localStorage.getItem(RANK_KEY2);
+    if (raw2) l = unpackMatches(JSON.parse(raw2));
+    else { const old = JSON.parse(localStorage.getItem(RANK_KEY) || '[]'); if (Array.isArray(old) && old.length) { l = old.map(cleanMatch).filter(Boolean); setTimeout(() => saveMatches(l), 0); } }
+  } catch (e) { l = []; }
+  matchCache = l;
+  return l;
+}
+function saveMatches(all) {
+  matchCache = all;
+  let keep = all;
+  for (let tries = 0; tries < 30 && keep.length; tries++) {
+    try { localStorage.setItem(RANK_KEY2, JSON.stringify(packMatches(keep))); return; }
+    catch (e) { keep = keep.slice(Math.ceil(keep.length * 0.1)); }  // Speicher voll: älteste 10 % weglassen
+  }
 }
 function cleanMatch(m) {
   if (!m || typeof m.id !== 'string' || !Array.isArray(m.players) || m.players.length < 2 || m.players.length > MAX_PLAYERS) return null;
@@ -562,16 +747,16 @@ function cleanMatch(m) {
   return { id: m.id.slice(0, 40), date: +m.date || 0, players, winner };
 }
 function mergeMatches(list) {
-  if (!Array.isArray(list)) return false;
-  const all = loadMatches(); const ids = new Set(all.map((m) => m.id));
+  if (!list) return false;
+  const all = loadMatches().slice(); const ids = new Set(all.map((m) => m.id));
   let added = false;
-  for (const raw of list.slice(-RANK_MAX)) {
+  for (const raw of unpackMatches(list)) {
     const m = cleanMatch(raw);
     if (m && !ids.has(m.id)) { all.push(m); ids.add(m.id); added = true; }
   }
   if (added) {
     all.sort((a, b) => a.date - b.date);
-    try { localStorage.setItem(RANK_KEY, JSON.stringify(all.slice(-RANK_MAX))); } catch (e) {}
+    saveMatches(all);
     renderRanking();
   }
   return added;
@@ -635,12 +820,12 @@ function renderBoard() {
 }
 function recordWin(g) {
   const winner = g.players.find((p) => p.name === g.lastWinner);
-  if (!winner || g.players.length < 2) return;
+  if (!winner || g.players.filter((p) => !p.waiting).length < 2) return;
   const m = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8), date: Date.now(),
     players: g.players.filter((p) => !p.waiting).map((p) => ({ name: p.name, score: p === winner ? 1 : 0 })), winner: winner.name };
   mergeMatches([m]);
   renderRanking();
-  const msg = { t: 'matches', list: loadMatches() };
+  const msg = { t: 'matches', list: packMatches(loadMatches()) };
   for (const c of S.conns.values()) c.send(msg);
 }
 
@@ -753,10 +938,10 @@ function arrangeMobile(game, entering) {
   const on = game && Chat.mobile(), tools = $('head-tools'), pick = document.querySelector('.ctl-pick');
   if (on && !mobileArranged) {
     const home = (el) => ({ el, parent: el.parentNode, next: el.nextSibling });
-    homes = homes || [home($('chat-toggle')), home($('btn-mute')), home($('btn-quit'))];
+    homes = homes || [home($('chat-toggle')), home($('btn-mute')), home($('btn-afk')), home($('btn-quit'))];
     // Verlassen als ✕ ganz links vor dem Titel, Ton als Symbol links neben der Steuerungswahl
     document.querySelector('header').prepend($('btn-quit'));
-    tools.append($('btn-mute'), pick, $('chat-toggle'));
+    tools.append($('btn-afk'), $('btn-mute'), pick, $('chat-toggle'));
     const host = S.role === 'host', q = $('btn-quit');
     q.title = host ? 'Zurück zur Lobby' : 'Raum verlassen'; q.setAttribute('aria-label', q.title);
     $('ctl-help').open = false; $('rank-fold').open = false;
@@ -843,12 +1028,13 @@ function onClientConnect(conn) {
       S.conns.set(pid, conn);
       conn.send({ t: 'welcome', id: pid });
       conn.send({ t: 'chatlog', list: Chat.log.slice(-20) });
-      if (mergeMatches(m.matches)) { const msg = { t: 'matches', list: loadMatches() }; for (const c of S.conns.values()) c.send(msg); }
-      else conn.send({ t: 'matches', list: loadMatches() });
+      if (mergeMatches(m.matches)) { const msg = { t: 'matches', list: packMatches(loadMatches()) }; for (const c of S.conns.values()) c.send(msg); }
+      else conn.send({ t: 'matches', list: packMatches(loadMatches()) });
       broadcastLobby();
       return;
     }
     if (m.t === 'rename') { renamePlayer(pid, m.name); return; }
+    if (m.t === 'afk') { S.game.setAfk(pid, !!m.on); broadcastLobby(); return; }
     if (m.t === 'chat') {
       const p = S.game.players.find((q) => q.id === pid);
       if (p) hostChat(p, m.text);
@@ -870,7 +1056,7 @@ function onClientConnect(conn) {
 }
 
 function broadcastLobby() {
-  const msg = { t: 'lobby', players: S.game.players.map((p) => ({ id: p.id, name: p.name, color: p.color })), phase: S.game.phase, settings: S.game.settings, roomName: S.roomName };
+  const msg = { t: 'lobby', players: S.game.players.map((p) => ({ id: p.id, name: p.name, color: p.color, afk: !!p.afk })), phase: S.game.phase, settings: S.game.settings, roomName: S.roomName };
   for (const c of S.conns.values()) c.send(msg);
   renderLobby(msg);
 }
@@ -889,7 +1075,7 @@ async function joinRoom() {
         else if (m.t === 'reject') { clearTimeout(timer); reject(new Error(m.reason)); }
       };
       conn.onClose = () => { clearTimeout(timer); reject(new Error('Verbindung getrennt.')); };
-      conn.send({ t: 'join', name: f.name, pw, matches: loadMatches() });
+      conn.send({ t: 'join', name: f.name, pw, matches: packMatches(loadMatches()) });
     });
     conn.onData = onHostMessage;
     conn.onClose = () => { if (S.role === 'client') leave('Der Gastgeber hat das Spiel verlassen.'); };
@@ -995,6 +1181,7 @@ function renderSettings(st, isHost) {
     ? 'Klassische Regeln: 30 % Power-ups, keine Mega-Items. Es wird endlos weitergespielt.'
     : 'Alles selbst einstellen: Variante, Feldgröße, Power-ups und Mega-Items. Es wird endlos weitergespielt.';
   $('set-items-val').textContent = st.items + ' %';
+  $('set-pause-val').textContent = st.pause + ' s';
   $('set-mega-val').textContent = st.mega + ' %';
   // Wie viel Prozent aller Power-ups ergibt das je Mega-Item?
   const sum = MEGA_LIST.reduce((a, t) => a + st.megaW[t], 0);
@@ -1002,11 +1189,12 @@ function renderSettings(st, isHost) {
     const share = sum ? st.mega * st.megaW[t] / sum : 0;
     $('w-' + t).textContent = st.megaW[t] ? `Gewicht ${st.megaW[t]} · ≈ ${share < 1 && share > 0 ? share.toFixed(1) : Math.round(share)} % der Power-ups` : 'aus';
   }
+  renderMapPick(st, isHost);
   $('settings-note').textContent = isHost ? 'Nur du als Gastgeber kannst das ändern.' : 'Der Gastgeber legt die Einstellungen fest.';
 }
 function readSettings() {
   const f = $('settings');
-  return cleanSettings({ mode: f.querySelector('input[name=mode]:checked').value, variant: f.variant.value, size: f.size.value, items: f.items.value, wins: WIN_ROUNDS, mega: f.mega.value,
+  return cleanSettings({ mode: f.querySelector('input[name=mode]:checked').value, variant: f.variant.value, size: f.size.value, map: f.map.value, pause: f.pause.value, items: f.items.value, wins: WIN_ROUNDS, mega: f.mega.value,
     megaW: Object.fromEntries(MEGA_LIST.map((t) => [t, f['w_' + t].value])) });
 }
 function loadSavedSettings() {
@@ -1019,7 +1207,9 @@ function renderLobby(m) {
   // Mitspieler sehen den Raumnamen so, wie der Gastgeber ihn geschrieben hat
   if (m.roomName && slug(m.roomName) === S.room) { S.roomName = m.roomName; $('lobby-room').textContent = '„' + S.roomName + '“'; if ($('inv-link')) updateInvite(); }
   $('lobby-players').innerHTML = m.players.map((p) =>
-    `<li><span class="dot" style="background:${p.color}"></span>${esc(p.name)}${p.id === 'host' ? ' <small>(Gastgeber)</small>' : ''}${p.id === S.myId ? ' <small>– du</small>' : ''}</li>`).join('');
+    `<li><span class="dot" style="background:${p.color}"></span>${esc(p.name)}${p.id === 'host' ? ' <small>(Gastgeber)</small>' : ''}${p.id === S.myId ? ' <small>– du</small>' : ''}${p.afk ? ' <small class="afk-tag">💤 AFK</small>' : ''}</li>`).join('');
+  S.lobbyPlayers = m.players.length;
+  if (me) showAfk(!!me.afk);
   const isHost = S.role === 'host';
   $('btn-start').classList.toggle('hidden', !isHost);
   renderSettings(m.settings, isHost);
@@ -1186,34 +1376,31 @@ $('btn-start').onclick = () => {
   broadcastLobby();
   show('game');
 };
-// Zahnrad (PC, nur Gastgeber): Spielmodus im Spiel umschalten, gilt ab der nächsten Runde
+// Zahnrad (PC, nur Gastgeber): kleiner Knopf am Rand, klappt die Spieleinstellungen auf
+// (Klassisch/Individuell, Feldgröße und die Optionen von Individuell). Dafür wandert das Einstellungs-
+// Formular aus der Lobby in das Panel; Änderungen gelten ab der nächsten Runde.
+let settingsHome = null;
 function updateModeBtn() {
-  const st = S.game && cleanSettings(S.game.settings), b = $('btn-mode');
-  if (!st) return;
-  const next = st.mode === 'klassisch' ? 'individuell' : 'klassisch';
-  const pending = S.game.phase !== 'lobby' && S.game.rules.mode !== st.mode;
-  b.innerHTML = `⚙️ ${MODES[st.mode]}${pending ? ' <small>(ab nächster Runde)</small>' : ''}`;
-  b.title = `Spielmodus: ${MODES[st.mode]}. Klicken für ${MODES[next]} – gilt ab der nächsten Runde.`;
-  const sz = $('game-size');
-  if (document.activeElement !== sz) sz.value = st.size;
-  const [w, h] = rulesFor(st, S.game.players.length).dims;
-  sz.title = `Feldgröße jetzt ${W} × ${H}` + (w !== W || h !== H ? `, ab nächster Runde ${w} × ${h}` : '');
-  $('game-size-note').textContent = w !== W || h !== H ? `ab nächster Runde ${w} × ${h}` : '';
+  if (!S.game || $('game-settings').classList.contains('hidden')) return;
+  const st = cleanSettings(S.game.settings), [w, h] = rulesFor(st, S.game.players.length).dims;
+  const changed = S.game.rules.mode !== st.mode || w !== W || h !== H || S.game.rules.variant !== rulesFor(st, S.game.players.length).variant;
+  $('gs-note').textContent = changed ? `Ab nächster Runde: ${MODES[st.mode]}, Feld ${w} × ${h}` : 'Änderungen gelten ab der nächsten Runde.';
 }
-$('game-size').onchange = () => {
-  if (S.role !== 'host') return;
-  S.game.settings = cleanSettings({ ...S.game.settings, size: $('game-size').value });
-  try { localStorage.setItem('ff-settings', JSON.stringify(S.game.settings)); } catch (e) {}
-  updateModeBtn();
-};
-$('btn-mode').onclick = () => {
-  if (S.role !== 'host') return;
-  const st = cleanSettings(S.game.settings);
-  st.mode = st.mode === 'klassisch' ? 'individuell' : 'klassisch';
-  S.game.settings = cleanSettings(st);
-  try { localStorage.setItem('ff-settings', JSON.stringify(S.game.settings)); } catch (e) {}
-  updateModeBtn();
-};
+function openGameSettings(open) {
+  const panel = $('game-settings'), form = $('settings');
+  if (open && S.role === 'host') {
+    if (!settingsHome) settingsHome = { parent: form.parentNode, next: form.nextSibling };
+    $('gs-slot').append(form);
+    renderSettings(S.game.settings, true);
+    panel.classList.remove('hidden'); $('btn-mode').classList.add('on');
+    updateModeBtn();
+  } else {
+    panel.classList.add('hidden'); $('btn-mode').classList.remove('on');
+    if (settingsHome && form.parentNode !== settingsHome.parent) settingsHome.parent.insertBefore(form, settingsHome.next);
+  }
+}
+$('btn-mode').onclick = () => openGameSettings($('game-settings').classList.contains('hidden'));
+$('gs-close').onclick = () => openGameSettings(false);
 $('btn-again').onclick = () => {
   if (S.role !== 'host') return;
   S.game.phase = 'lobby';
@@ -1291,12 +1478,77 @@ $('btn-random').onclick = () => {
 $('name-form').addEventListener('submit', (e) => { e.preventDefault(); changeMyName($('my-name').value); $('my-name').blur(); });
 $('hud').addEventListener('click', (e) => { if (e.target.closest('.hud-p.me')) askName(); });
 $('settings').addEventListener('input', () => {
-  if (S.role !== 'host' || S.game.phase !== 'lobby') return;
+  if (S.role !== 'host') return;
   S.game.settings = readSettings();
   try { localStorage.setItem('ff-settings', JSON.stringify(S.game.settings)); } catch (e) {}
+  // Im Spiel: nur merken und anzeigen; die Mitspieler bekommen es zur nächsten Runde
+  if (S.game.phase !== 'lobby') { renderSettings(S.game.settings, true); updateModeBtn(); return; }
   broadcastLobby();
 });
 renderRanking();
+
+// ---------- AFK ----------
+function showAfk(on) {
+  S.afk = on;
+  for (const id of ['btn-afk', 'lobby-afk']) {
+    const b = $(id); if (!b) continue;
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+  $('btn-afk').innerHTML = on ? '🙋<span class="lbl"> Wieder da</span>' : '💤<span class="lbl"> AFK</span>';
+  $('btn-afk').title = on ? 'Du bist AFK und setzt aus. Antippen, wenn du wieder mitspielst.' : 'AFK: aussetzen, ohne zu verlieren';
+  $('btn-afk').setAttribute('aria-label', $('btn-afk').title);
+  $('lobby-afk').textContent = on ? '💤 Du bist AFK – wieder mitspielen' : '💤 AFK (aussetzen)';
+}
+function toggleAfk() {
+  const on = !S.afk;
+  if (S.role === 'host') { S.game.setAfk('host', on); broadcastLobby(); }
+  else if (S.conn) S.conn.send({ t: 'afk', on });
+  showAfk(on);
+}
+$('btn-afk').onclick = () => { toggleAfk(); $('btn-afk').blur(); };
+$('lobby-afk').onclick = toggleAfk;
+showAfk(false);
+
+// ---------- Kartenwahl (kleine Vorschaubilder) ----------
+const mapThumbCache = new Map();
+function mapThumb(id, w, h, slots) {
+  const key = [id, w, h, slots.join('')].join('|');
+  if (mapThumbCache.has(key)) return mapThumbCache.get(key);
+  const t = 4, c = document.createElement('canvas'); c.width = w * t; c.height = h * t;
+  const x2 = c.getContext('2d');
+  if (id === 'zufall') {
+    x2.fillStyle = '#2f5a3a'; x2.fillRect(0, 0, c.width, c.height);
+    x2.font = `${Math.round(h * t * 0.6)}px system-ui, sans-serif`; x2.textAlign = 'center'; x2.textBaseline = 'middle';
+    x2.fillText('🎲', c.width / 2, c.height / 2 + 2);
+  } else {
+    const g = genWalls(id, w, h, seededRandom(7 + id.length * 31), slots);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      x2.fillStyle = g[y * w + x] === WALL ? '#6e7389' : (x + y) % 2 ? '#2f5a3a' : '#33613f';
+      x2.fillRect(x * t, y * t, t, t);
+    }
+  }
+  const url = c.toDataURL();
+  mapThumbCache.set(key, url);
+  return url;
+}
+function renderMapPick(st, isHost) {
+  const box = $('map-pick'); if (!box) return;
+  const n = Math.max(2, (S.game ? S.game.players.length : S.lobbyPlayers) || 4);
+  const [w, h] = rulesFor(st, n).dims, slots = [...Array(Math.min(MAX_PLAYERS, n)).keys()];
+  const html = [...MAP_IDS, 'zufall'].map((id) => {
+    const name = id === 'zufall' ? 'Zufall' : MAPS[id].name, dice = id !== 'zufall' && !MAPS[id].fixed;
+    return `<button type="button" data-map="${id}" class="${st.map === id ? 'on' : ''}"${isHost ? '' : ' disabled'} aria-pressed="${st.map === id}" title="${id === 'zufall' ? 'Jede Runde eine andere Karte' : dice ? 'Wird jede Runde neu gewürfelt' : 'Feste Karte'}">` +
+      `<img src="${mapThumb(id, w, h, slots)}" alt=""><span>${dice ? '🎲 ' : ''}${name}</span></button>`;
+  }).join('');
+  if (box.dataset.html !== html) { box.innerHTML = html; box.dataset.html = html; }
+}
+$('map-pick').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-map]');
+  if (!b || S.role !== 'host') return;
+  $('settings').map.value = b.dataset.map;
+  $('settings').dispatchEvent(new Event('input'));
+});
 
 // ---------- Sound ----------
 // Alle Geräusche werden mit der Web Audio API erzeugt, es gibt keine Sounddateien.
@@ -1428,19 +1680,30 @@ function draw(v, isHost) {
   // Anzeige oben
   const hud = v.players.map((p) =>
     `<span class="hud-p${p.alive || v.phase === 'lobby' ? '' : ' dead'}${p.id === S.myId ? ' me' : ''}"${p.id === S.myId ? ' title="Antippen, um deinen Namen zu ändern"' : ''}><span class="dot" style="background:${p.color}"></span>${esc(p.name)} <b title="Siege in dieser Sitzung">🏆 ${p.score}</b>` +
-    (p.waiting ? ' <small>👀 ab nächster Runde</small>' : '') +
+    (p.afk ? ' <small>💤 AFK</small>' : p.waiting ? ' <small>👀 ab nächster Runde</small>' : '') +
     (p.id === S.myId ? ` <small>💣${p.bombs} 🔥${p.range} 👟${p.speed}${p.kick ? ' 🦶' : ''}${p.mega ? ' 🌟' + p.mega : ''}${p.pierce ? ' 💥' + p.pierce : ''}${p.shield ? ' 🛡️' : ''}${p.ghost ? ' 👻' + p.ghost : ''}${p.remote ? ' 🧨' + p.remote : ''}</small>` : '') + '</span>').join('');
   if (hud !== lastHud) { $('hud').innerHTML = hud; lastHud = hud; }
   // Andere Spieler im Raum oder neuer Name? Dann den Direktvergleich neu aufbauen
   const who = v.players.map((p) => p.name + p.color).join('|');
   if (who !== lastWho) { lastWho = who; renderRanking(); }
   const ov = $('overlay');
-  ov.classList.toggle('hidden', !v.msg);
-  if (v.msg && ov.textContent !== v.msg) ov.textContent = v.msg;
+  if (v.phase === 'ready' && v.cd > 0) {
+    // Countdown in der Mitte: Ring läuft ab, Zahl springt jede Sekunde neu herein
+    const n = Math.ceil(v.cd);
+    if (ov.dataset.cd !== n + v.msg) {
+      ov.dataset.cd = n + v.msg;
+      ov.innerHTML = `<div class="cd"><svg viewBox="0 0 100 100" aria-hidden="true"><circle class="cd-bg" cx="50" cy="50" r="44"/><circle class="cd-fg" cx="50" cy="50" r="44"/></svg><b>${n}</b></div><div class="cd-msg">${esc(v.msg)}</div>`;
+    }
+    ov.querySelector('.cd-fg').style.strokeDashoffset = (276.5 * (1 - v.cd / (v.cdT || 4))).toFixed(1);
+    ov.classList.add('ready'); ov.classList.remove('hidden');
+  } else {
+    if (ov.dataset.cd) { ov.dataset.cd = ''; ov.textContent = ''; }
+    ov.classList.remove('ready');
+    ov.classList.toggle('hidden', !v.msg);
+    if (v.msg && ov.textContent !== v.msg) ov.textContent = v.msg;
+  }
   $('btn-again').classList.toggle('hidden', !isHost);
   $('btn-mode').classList.toggle('hidden', !isHost);
-  $('game-size-wrap').classList.toggle('hidden', !isHost);
-  if (isHost) updateModeBtn();
 }
 
 function drawWall(px, py) {
@@ -1577,7 +1840,7 @@ function roundRect(x, y, w, h, r) {
 }
 
 // Für Tests von außen erreichbar
-window.Funkenfeld = { Game, S, Sound };
+window.Funkenfeld = { Game, S, Sound, loadMatches, mergeMatches, packMatches };
 // ---------- Neue Version erkennen ----------
 // GitHub Pages lässt Browser Dateien bis zu 10 Minuten zwischenspeichern. Darum fragt das Spiel
 // version.txt ohne Cache ab und bietet bei einer neuen Version einen Knopf zum Neuladen an.
@@ -1609,6 +1872,9 @@ const HELP = [
   ['#stage', 'Das Spielfeld. Bei „Wischen“: irgendwo in eine Richtung wischen und den Finger liegen lassen, um zu laufen. Bomben legst du mit dem 💣-Knopf.'],
   ['.ctl-pick label', 'Handysteuerung: „Tasten“ zeigt ein Steuerkreuz, bei „Wischen“ wischst du irgendwo auf dem Bildschirm. Gilt nur für diesen Browser.'],
   ['#btn-mute', 'Schaltet Ton und Effekte an oder aus.'],
+  ['#btn-afk', 'AFK (nicht am Platz): Du setzt aus, ab sofort und in allen weiteren Runden, bis du wieder da bist. Ausgesetzte Runden zählen nicht als Niederlage.'],
+  ['#lobby-afk', 'AFK (nicht am Platz): Du setzt aus, bis du wieder da bist. Ausgesetzte Runden zählen nicht als Niederlage.'],
+  ['.map-pick button', 'Karte: wie die festen Blöcke stehen. Karten mit 🎲 werden jede Runde neu gewürfelt, „Zufall“ nimmt jede Runde eine andere Karte.'],
   ['#btn-quit', 'Auf dem Handy (✕): Der Gastgeber holt alle zurück in die Lobby, Mitspieler verlassen den Raum. Am PC: Raum verlassen.'],
   ['#btn-leave', 'Verlässt den Raum. Bist du der Gastgeber, endet das Spiel für alle.'],
   ['#btn-again', 'Nur für den Gastgeber: zurück in die Lobby, die Siege dieser Sitzung starten wieder bei 0.'],

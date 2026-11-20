@@ -81,7 +81,7 @@
         </ul>
       </div>
     </details>
-    <a class="archiv-btn" href="v1/">🗄️ Archiv: Version 1 spielen</a>
+    <nav class="ver-pick" aria-label="Version wählen">Version: <b>1.2 (aktuell)</b> <a href="v1.0/">1.0</a> <a href="v1/">V1 (Archiv)</a></nav>
   </section>
 
   <!-- Lobby -->
@@ -90,6 +90,7 @@
     <div class="panel lcard">
       <h2>Raum <span id="lobby-room"></span></h2>
       <ul id="lobby-players"></ul>
+      <button id="lobby-afk" type="button" class="secondary afk-btn" aria-pressed="false">💤 AFK (aussetzen)</button>
       <form id="name-form" class="name-form" autocomplete="off">
         <label for="my-name">Dein Name</label>
         <div class="inv-row"><input id="my-name" maxlength="12" spellcheck="false"><button type="submit" class="secondary">Ändern</button></div>
@@ -123,6 +124,9 @@
           <option value="riesig">Riesig (23 × 17)</option>
         </select>
       </label>
+      <label>Pause vor jeder Runde (Countdown): <b id="set-pause-val">4 s</b>
+        <input name="pause" type="range" min="2" max="10" step="1" value="4">
+      </label>
       <div id="set-indiv">
       <label>Spielvariante
         <select name="variant">
@@ -155,6 +159,11 @@
             <input name="w_remote" type="range" min="0" max="100" step="5" value="100">
           </label>
       </details>
+      </div>
+      <div class="map-sec">
+        <span class="map-lbl">Karte <small>(🎲 = jede Runde neu gewürfelt)</small></span>
+        <div id="map-pick" class="map-pick" role="group" aria-label="Karte"></div>
+        <input type="hidden" name="map" value="klassisch">
       </div>
       <p id="settings-note" class="note"></p>
     </form>
@@ -210,24 +219,24 @@
         </div>
         <div class="row center">
           <button id="btn-again" class="hidden secondary" title="Zurück zur Lobby, Siege dieser Sitzung auf 0">Zur Lobby</button>
-          <button id="btn-mode" class="hidden secondary" type="button">⚙️ Klassisch</button>
-          <label id="game-size-wrap" class="game-size hidden" title="Feldgröße, gilt ab der nächsten Runde">📐
-            <select id="game-size">
-              <option value="auto">Automatisch</option><option value="klein">Klein 11 × 9</option><option value="mittel">Mittel 15 × 13</option><option value="gross">Groß 19 × 15</option><option value="riesig">Riesig 23 × 17</option>
-            </select>
-            <small id="game-size-note"></small>
-          </label>
+          <button id="btn-afk" class="secondary afk-btn" type="button" aria-pressed="false"></button>
           <button id="btn-mute" class="secondary"></button>
         </div>
       </div>
     </div>
     <div class="row center leave-row"><button id="btn-quit" class="secondary" aria-label="Verlassen" title="Verlassen"><span class="x">✕</span><span class="lbl">Verlassen</span></button></div>
   </section>
+  <button id="btn-mode" class="hidden gear-btn" type="button" title="Spieleinstellungen (Modus, Feldgröße, Optionen)" aria-label="Spieleinstellungen">⚙️</button>
+  <div id="game-settings" class="panel game-settings hidden" role="dialog" aria-label="Spieleinstellungen">
+    <div class="gs-head"><b>⚙️ Spieleinstellungen</b><button id="gs-close" type="button" class="secondary gs-x" aria-label="Schließen">✕</button></div>
+    <p id="gs-note" class="note"></p>
+    <div id="gs-slot"></div>
+  </div>
   <div id="update-bar" class="update-bar hidden" role="status">
     <span>Es gibt eine neue Version von BombRe.</span>
     <button id="btn-update" type="button">Jetzt laden</button>
   </div>
-  <p class="ver">Version 1.2.0 <span class="build">· __VERSION__</span></p>
+  <p class="ver">Version 1.2 <span class="build">· __VERSION__</span></p>
   <!-- Chat: wird je nach Bildschirm in die Lobby oder neben das Spielfeld gehängt -->
   <div id="chat" class="chat hidden">
     <div class="chat-grip" aria-hidden="true"></div>

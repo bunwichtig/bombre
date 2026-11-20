@@ -43,6 +43,7 @@ Unter dem Spielfeld lässt sich der Ton aus- und einschalten.
 
 Die Rangliste zeigt pro Spieler eine fortlaufende Zahl: alle gewonnenen Runden. Jeder Rundensieg zählt sofort. Gespeichert wird im Browser (localStorage).
 Beim Beitreten tauschen Gastgeber und Mitspieler ihre Siege aus, so haben alle denselben Stand.
+Es gibt kein Limit: alle Runden bleiben gespeichert und wandern beim gemeinsamen Spielen von Raum zu Raum weiter (jede Runde hat eine eindeutige Kennung, nichts wird doppelt gezählt). Gespeichert wird kompakt, rund 30 Byte pro Runde; erst wenn der Browser-Speicher voll ist (ca. 150.000 Runden), fallen die ältesten heraus.
 Spieler werden über ihren Namen zugeordnet, also immer denselben Namen benutzen.
 
 ## Lokal testen
